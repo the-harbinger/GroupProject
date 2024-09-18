@@ -1,1 +1,1 @@
-Just Messing Around with Pygame
+Just messing around with pygame.
