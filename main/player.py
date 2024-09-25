@@ -4,7 +4,7 @@ from pygame import Vector2
 
 class Player:
     _instance = None
-    rect = pygame.Rect(0, 0, 32, 32)
+    rect = pygame.Rect(600, 400, 32, 32)
     sprite = pygame.Surface((32, 32))
     velocity = Vector2(0, 0)
     speed = 3
@@ -23,7 +23,7 @@ class Player:
             cls.sprite = pygame.image.load("../assets/sprites/player/ghost_player.png").convert_alpha()
         return cls._instance
 
-    def update(self):
+    def update(self, last_tick: int):
         keys = pygame.key.get_pressed()
 
         x_strength = int(keys[pygame.K_RIGHT]) - int(keys[pygame.K_LEFT])
@@ -36,5 +36,5 @@ class Player:
         self.velocity = self.speed * direction
         self.rect = self.rect.move(self.velocity)
 
-    def draw(self, screen: pygame.Surface):
-        screen.blit(self.sprite, (self.rect.x, self.rect.y))
+    def draw(self, background: pygame.Surface):
+        background.blit(self.sprite, (self.rect.x, self.rect.y))
