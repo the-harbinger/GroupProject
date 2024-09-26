@@ -7,7 +7,7 @@ class Player:
     rect = pygame.Rect(600, 400, 32, 32)
     sprite = pygame.Surface((32, 32))
     velocity = Vector2(0, 0)
-    speed = 3
+    speed = 5
     num_coins = 0
     num_ecto = 5
     max_num_ecto = 5
@@ -20,8 +20,10 @@ class Player:
     def get_instance(cls):
         if cls._instance is None:
             cls._instance = cls.__new__(cls)
-            cls.sprite = pygame.image.load("../assets/sprites/player/ghost_player.png").convert_alpha()
         return cls._instance
+
+    def load_sprite(self):
+        self.sprite = pygame.image.load("../assets/sprites/player/ghost_player.png").convert_alpha()
 
     def update(self, last_tick: int):
         keys = pygame.key.get_pressed()

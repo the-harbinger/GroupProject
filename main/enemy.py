@@ -1,6 +1,5 @@
 import pygame
 from pygame import Vector2
-import game as game_class
 import player as player_class
 
 

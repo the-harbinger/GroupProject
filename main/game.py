@@ -1,6 +1,7 @@
 import pygame
-import player as player_class
+import player as pl
 import enemy_manager as em
+import shop as sh
 
 
 class Game:
@@ -10,16 +11,17 @@ class Game:
     _instance = None
     player = None
     enemy_manager = None
+    shop = None
     width = 1200
     height = 800
     RUNNING = True
     curr_wave = 1
-    MAX_WAVES = 2
+    MAX_WAVES = 3
     background: pygame.Surface = pygame.Surface((width, height - 100))
     screen = pygame.display.set_mode((width, height))
     screen.fill("Red")
     clock = pygame.time.Clock()
-    state = "INFO"
+    state = "HOME"
     prev_state = "WAVE"
 
     @classmethod
@@ -40,6 +42,10 @@ class Game:
         keys = pygame.key.get_pressed()
 
         match self.state:
+
+            case "HOME":
+                self.state = "INFO"
+
             case "WAVE":
                 if keys[pygame.K_i]:
                     self.state = "INFO"
@@ -58,6 +64,7 @@ class Game:
                     self.player.rect.y = self.height / 2
 
                     if self.curr_wave < self.MAX_WAVES:
+                        self.shop.load_shop_upgrades()
                         self.state = "SHOP"
                     else:
                         self.state = "GAME_OVER"
@@ -68,9 +75,12 @@ class Game:
                     self.prev_state = "SHOP"
 
                 if keys[pygame.K_SPACE]:
+                    self.shop.close_shop()
                     self.curr_wave += 1
                     self.enemy_manager.load_enemies_for_wave(self.curr_wave)
                     self.state = "WAVE"
+
+                self.shop.update()
 
             case "INFO":
                 if keys[pygame.K_e]:
@@ -93,9 +103,9 @@ class Game:
                 self.enemy_manager.draw(self.background)
 
             case "SHOP":
-                # TODO IMPLEMENT SHOP CLASS
                 self.screen.blit(self.background, (0, 0))
-                self.background.fill("Yellow")
+                self.background.fill("Black")
+                self.shop.draw(self.background)
 
             case "INFO":
                 # TODO CREATE INFO SCREEN
@@ -109,12 +119,18 @@ class Game:
                 self.background.fill("Green")
 
         # TODO Draw the UI
-        pygame.display.update()
+        pygame.display.flip()
 
     def start(self) -> None:
-        self.player = player_class.Player.get_instance()
+        # Create instances of Game Objects
+        self.player = pl.Player.get_instance()
         self.enemy_manager = em.EnemyManager.get_instance()
+        self.shop = sh.Shop()
+
+        # Load variables for Game Objects
+        # Needed because pygame doesn't recognize some stuff as a module until it is instantiated
         self.enemy_manager.load_enemies_for_wave(self.curr_wave)
+        self.player.load_sprite()
 
         while self.RUNNING:
             for event in pygame.event.get():
