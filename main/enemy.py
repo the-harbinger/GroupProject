@@ -1,22 +1,45 @@
 import pygame
 from pygame import Vector2
-import game as game_class
-import player as player_class
+from player import Player
+import random
 
 
 class Enemy:
     game = None
-    player: player_class.Player = None
+    player: Player = None
     rect: pygame.Rect = pygame.Rect(0, 0, 50, 50)
     sprite: pygame.Surface = pygame.Surface((50, 50))
+    difficulty = 0
+    health = 0
+    speed = 3
+    velocity: Vector2 = None
+    is_environmental = False
+    color = None
 
-    def __init__(self, width, height, pos: pygame.Vector2):
-        self.game = game_class.Game.get_instance()
-        self.player = player_class.Player.get_instance()
-        self.rect = pygame.Rect(pos.x, pos.y, width, height)
+    def __init__(self, width, height, difficulty, health, start_pos: Vector2):
+        self.player = Player.get_instance()
+        self.rect = pygame.Rect(start_pos.x, start_pos.y, width, height)
+        self.difficulty = difficulty
+        self.health = health
+        self.color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
 
     def update(self):
-        pass
+        slope_y = self.player.rect.centery - self.rect.centery
+        slope_x = self.player.rect.centerx - self.rect.centerx
 
-    def draw(self):
-        pass
+        direction = Vector2(slope_x, slope_y)
+
+        if slope_y != 0 or slope_x != 0:
+            direction = direction.normalize()
+
+        self.velocity = direction * self.speed
+        self.rect = self.rect.move(self.velocity)
+
+        for e in self.player.ectos:
+            if e.rect.colliderect(self.rect) and e.is_active:
+                e.handle_enemy_hit()
+                self.health -= 10
+
+    def draw(self, background: pygame.Surface):
+        self.sprite.fill(self.color)
+        background.blit(self.sprite, (self.rect.x, self.rect.y))
