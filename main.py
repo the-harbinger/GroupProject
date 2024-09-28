@@ -72,7 +72,7 @@ class Player:
     sprite = image.load("assets/sprites/player/ghost_player.png").convert_alpha()
     velocity = Vector2(0, 0)
     ectos: list[Ectoplasm] = []
-    speed = 15
+    speed = 5
     num_coins = 15
     num_ecto = 0
     max_num_ecto = 5
@@ -82,6 +82,7 @@ class Player:
     health = 10
     shoot_pressed: bool = False
     shoot_direction: Vector2 = Vector2(0, -1)
+    state = "MOVE"
 
     @classmethod
     def get_instance(cls):
@@ -89,8 +90,7 @@ class Player:
             cls._instance = cls.__new__(cls)
         return cls._instance
 
-    def update(self, last_tick: int):
-        # MOVE THE PLAYER
+    def move(self):
         keys = pg.key.get_pressed()
 
         x_strength = int(keys[pg.K_RIGHT]) - int(keys[pg.K_LEFT])
@@ -101,20 +101,38 @@ class Player:
             direction = direction.normalize()
             self.shoot_direction = direction
 
-        desired_velocity: Vector2 = self.speed * direction
-        steering_force = desired_velocity - self.velocity * 1.5
-        self.velocity += steering_force * (last_tick / 1000)
+        self.velocity = self.speed * direction
+        self.rect = self.rect.move(self.velocity)
 
-        # SHOOT ECTOPLASM
         c_pressed = keys[pg.K_c]
         if c_pressed and len(self.ectos) != self.max_num_ecto:
-            self.shoot_pressed = True
+            self.state = "SHOOT"
 
-        if not c_pressed and self.shoot_pressed and self.num_ecto < self.max_num_ecto:
-            ecto = Ectoplasm(self.rect.x, self.rect.y, self.shoot_direction)
+    def shoot(self):
+        keys = pg.key.get_pressed()
+
+        x_strength = int(keys[pg.K_RIGHT]) - int(keys[pg.K_LEFT])
+        y_strength = int(keys[pg.K_DOWN]) - int(keys[pg.K_UP])
+
+        direction = Vector2(x_strength, y_strength)
+        if x_strength != 0 or y_strength != 0:
+            direction = direction.normalize()
+
+        c_pressed = keys[pg.K_c]
+        if not c_pressed and self.num_ecto < self.max_num_ecto:
+            ecto = Ectoplasm(self.rect.x, self.rect.y, direction)
             self.ectos.append(ecto)
             self.shoot_pressed = False
             self.num_ecto += 1
+            self.state = "MOVE"
+
+    def update(self, last_tick: int):
+        # MOVE THE PLAYER
+        match self.state:
+            case "MOVE":
+                self.move()
+            case "SHOOT":
+                self.shoot()
 
         uncollected_ectos = []
         for ecto in self.ectos:
@@ -127,7 +145,6 @@ class Player:
             if not ecto.is_collected:
                 uncollected_ectos.append(ecto)
             self.ectos = uncollected_ectos
-        self.rect = self.rect.move(self.velocity)
 
     def draw(self, background: Surface):
         for ecto in self.ectos:
@@ -180,15 +197,18 @@ class Enemy:
         ml = self.rect.midleft
         tl = self.rect.topleft
 
+        diag_length = 1
+        straight_length = 5
+
         steer_rays = [
-            ((mt[0], mt[1]), (mt[0], mt[1] - 10)),
-            ((tr[0], tr[1]), (tr[0] + 5, tr[1] - 5)),
-            ((mr[0], mr[1]), (mr[0] + 10, mr[1])),
-            ((br[0], br[1]), (br[0] + 5, br[1] + 5)),
-            ((mb[0], mb[1]), (mb[0], mb[1] + 10)),
-            ((bl[0], bl[1]), (bl[0] - 5, bl[1] + 5)),
-            ((ml[0], ml[1]), (ml[0] - 10, ml[1])),
-            ((tl[0], tl[1]), (tl[0] - 5, tl[1] - 5)),
+            ((mt[0], mt[1]), (mt[0], mt[1] - straight_length)),
+            ((tr[0], tr[1]), (tr[0] + diag_length, tr[1] - diag_length)),
+            ((mr[0], mr[1]), (mr[0] + straight_length, mr[1])),
+            ((br[0], br[1]), (br[0] + diag_length, br[1] + 5)),
+            ((mb[0], mb[1]), (mb[0], mb[1] + straight_length)),
+            ((bl[0], bl[1]), (bl[0] - diag_length, bl[1] + diag_length)),
+            ((ml[0], ml[1]), (ml[0] - straight_length, ml[1])),
+            ((tl[0], tl[1]), (tl[0] - diag_length, tl[1] - diag_length))
         ]
 
         for i in range(8):
@@ -205,23 +225,22 @@ class Enemy:
         steer_map = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         best_direction_index = 0
         for i in range(8):
-            context = interest_weights[i] - danger_weights[i]
-            steer_map[i] = context
-            if steer_map[best_direction_index] < context:
+            interest = interest_weights[i] - danger_weights[i]
+            steer_map[i] = interest
+            if steer_map[best_direction_index] < interest:
                 best_direction_index = i
         desired_velocity = self.steer_directions[best_direction_index] * self.speed
         steering_force = desired_velocity - self.velocity * (random.randint(1, 10) / 10)
         self.velocity += steering_force
 
     def get_desired_direction(self):
-        slope_y = self.player.rect.centery - self.rect.centery
-        slope_x = self.player.rect.centerx - self.rect.centerx
+        dy = self.player.rect.centery - self.rect.centery
+        dx = self.player.rect.centerx - self.rect.centerx
 
-        direction = Vector2(slope_x, slope_y)
+        direction = Vector2(dx, dy)
 
-        if slope_y != 0 or slope_x != 0:
+        if dy != 0 or dx != 0:
             direction = direction.normalize()
-
         return direction
 
     def update(self):
@@ -370,7 +389,7 @@ class Upgrade:
             background.blit(self.card, (self.rect.x, self.rect.y))
 
 
-# ALL IMPLEMENT NEW UPGRADES BELOW THIS LINE
+# IMPLEMENT UPGRADES BELOW THIS LINE
 class MaxHealthUpgrade(Upgrade):
     def __init__(self):
         super().__init__()
