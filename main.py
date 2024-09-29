@@ -1,5 +1,3 @@
-import math
-
 import pygame as pg
 from pygame import Vector2, Rect, Surface, time, mouse, image, display
 import random
@@ -11,27 +9,68 @@ mouse.set_visible(False)
 WINDOW_WIDTH = 1200
 WINDOW_HEIGHT = 800
 SCREEN = display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-SCREEN.fill("Red")
+SCREEN.fill("Blue")
+
+V_ZERO = Vector2(0, 0)
+V_NORTH = Vector2(0, -1)
+V_NORTH_EAST = Vector2(1, -1)
+V_EAST = Vector2(1, 0)
+V_SOUTH_EAST = Vector2(1, 1)
+V_SOUTH = Vector2(0, 1)
+V_SOUTH_WEST = Vector2(-1, 1)
+V_WEST = Vector2(-1, 0)
+V_NORTH_WEST = Vector2(-1, -1)
 
 
-class Ectoplasm:
-    rect: Rect = None
-    sprite: Surface = None
-    direction: Vector2 = None
-    speed = 10
-    damage = 5
-    velocity: Vector2 = None
-    is_active = True
+def create_line(x1, y1, x2, y2):
+    return (x1, y1), (x2, y2)
+
+
+class Projectile:
+    rect: Rect
+    sprite: Surface
+    direction: Vector2
+    speed: int
+    damage: int
+    velocity: Vector2
+    is_active: bool
+
+    def __init__(self, rect: Rect, sprite: Surface, direction: Vector2, speed: int, damage: int, is_active: bool):
+        self.rect = rect
+        self.sprite = sprite
+        self.direction = direction
+        self.speed = speed
+        self.damage = damage
+        self.is_active = is_active
+
+    def move(self):
+        self.velocity = self.direction * self.speed
+        self.rect = self.rect.move(self.velocity)
+
+    def handle_hit(self):
+        pass
+
+    def update(self):
+        pass
+
+    def draw(self, background: Surface):
+        background.blit(self.sprite, Vector2(self.rect.x, self.rect.y))
+
+
+class Ectoplasm(Projectile):
     is_collected = False
     distance_traveled = 0
     max_range = 250
 
     def __init__(self, x, y, direction):
-        self.rect = Rect(x + 8, y + 8, 16, 16)
-        self.sprite = image.load("assets/sprites/player/ectoplasm.png").convert_alpha()
-        self.direction = direction
+        super().__init__(Rect(x + 8, y + 8, 16, 16),
+                         image.load("assets/sprites/player/ectoplasm.png").convert_alpha(),
+                         direction,
+                         10,
+                         5,
+                         True)
 
-    def handle_enemy_hit(self):
+    def handle_hit(self):
         self.is_active = False
 
     def update(self):
@@ -56,14 +95,10 @@ class Ectoplasm:
 
         if self.is_active:
             self.distance_traveled += self.direction.magnitude() * self.speed
-            self.velocity = self.direction * self.speed
-            self.rect = self.rect.move(self.velocity)
+            super().move()
 
             if self.distance_traveled >= self.max_range:
                 self.is_active = False
-
-    def draw(self, background: Surface):
-        background.blit(self.sprite, Vector2(self.rect.x, self.rect.y))
 
 
 class Player:
@@ -90,17 +125,22 @@ class Player:
             cls._instance = cls.__new__(cls)
         return cls._instance
 
-    def move(self):
-        keys = pg.key.get_pressed()
-
+    @staticmethod
+    def get_direction(keys):
         x_strength = int(keys[pg.K_RIGHT]) - int(keys[pg.K_LEFT])
         y_strength = int(keys[pg.K_DOWN]) - int(keys[pg.K_UP])
 
         direction = Vector2(x_strength, y_strength)
         if x_strength != 0 or y_strength != 0:
             direction = direction.normalize()
-            self.shoot_direction = direction
+        return direction
 
+    def take_damage(self, damage: int):
+        self.health -= damage
+
+    def move(self):
+        keys = pg.key.get_pressed()
+        direction = self.get_direction(keys)
         self.velocity = self.speed * direction
         self.rect = self.rect.move(self.velocity)
 
@@ -110,24 +150,17 @@ class Player:
 
     def shoot(self):
         keys = pg.key.get_pressed()
-
-        x_strength = int(keys[pg.K_RIGHT]) - int(keys[pg.K_LEFT])
-        y_strength = int(keys[pg.K_DOWN]) - int(keys[pg.K_UP])
-
-        direction = Vector2(x_strength, y_strength)
-        if x_strength != 0 or y_strength != 0:
-            direction = direction.normalize()
-
+        direction = self.get_direction(keys)
         c_pressed = keys[pg.K_c]
-        if not c_pressed and self.num_ecto < self.max_num_ecto:
-            ecto = Ectoplasm(self.rect.x, self.rect.y, direction)
-            self.ectos.append(ecto)
-            self.shoot_pressed = False
-            self.num_ecto += 1
+        if not c_pressed:
+            if direction != V_ZERO:
+                ecto = Ectoplasm(self.rect.x, self.rect.y, direction)
+                self.ectos.append(ecto)
+                self.shoot_pressed = False
+                self.num_ecto += 1
             self.state = "MOVE"
 
-    def update(self, last_tick: int):
-        # MOVE THE PLAYER
+    def update(self):
         match self.state:
             case "MOVE":
                 self.move()
@@ -153,31 +186,30 @@ class Player:
 
 
 class Enemy:
-    game = None
-    player: Player = None
+    player: Player = Player.get_instance()
     rect: Rect = Rect(0, 0, 50, 50)
     sprite: Surface = Surface((50, 50))
     difficulty = 2
-    health = 0
     speed = 1.5
+    health = 0
+    max_health = 0
+    ATTACK_RATE = 0
+    last_attack = 0
     velocity: Vector2 = Vector2(0, 0)
-    is_environmental = False
-    color = None
-    steer_directions = [Vector2(0, -1),
-                        Vector2(1, -1),
-                        Vector2(1, 0),
-                        Vector2(1, 1),
-                        Vector2(0, 1),
-                        Vector2(-1, 1),
-                        Vector2(-1, 0),
-                        Vector2(-1, -1)]
+    state = "MOVE"
+    steer_directions = [V_NORTH, V_NORTH_EAST, V_EAST, V_SOUTH_EAST, V_SOUTH, V_SOUTH_WEST, V_WEST, V_NORTH_WEST]
+    dt = 0
 
-    def __init__(self, width, height, difficulty, health, start_pos: Vector2):
+    def __init__(self, rect: Rect, sprite: Surface, speed: int, difficulty: int, health: int, ATTACK_RATE: int):
         self.player = Player.get_instance()
-        self.rect = Rect(start_pos.x, start_pos.y, width, height)
+        self.rect = rect
+        self.sprite = sprite
         self.difficulty = difficulty
         self.health = health
-        self.color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        self.max_health = health
+        self.speed = speed
+        self.ATTACK_RATE = ATTACK_RATE
+        self.sprite.fill("Green")
 
     def take_damage(self, damage):
         self.health -= damage
@@ -201,14 +233,14 @@ class Enemy:
         straight_length = 5
 
         steer_rays = [
-            ((mt[0], mt[1]), (mt[0], mt[1] - straight_length)),
-            ((tr[0], tr[1]), (tr[0] + diag_length, tr[1] - diag_length)),
-            ((mr[0], mr[1]), (mr[0] + straight_length, mr[1])),
-            ((br[0], br[1]), (br[0] + diag_length, br[1] + 5)),
-            ((mb[0], mb[1]), (mb[0], mb[1] + straight_length)),
-            ((bl[0], bl[1]), (bl[0] - diag_length, bl[1] + diag_length)),
-            ((ml[0], ml[1]), (ml[0] - straight_length, ml[1])),
-            ((tl[0], tl[1]), (tl[0] - diag_length, tl[1] - diag_length))
+            create_line(mt[0], mt[1], mt[0], mt[1] - straight_length),
+            create_line(tr[0], tr[1], tr[0] + diag_length, tr[1] - diag_length),
+            create_line(mr[0], mr[1], mr[0] + straight_length, mr[1]),
+            create_line(br[0], br[1], br[0] + diag_length, br[1] + 5),
+            create_line(mb[0], mb[1], mb[0], mb[1] + straight_length),
+            create_line(bl[0], bl[1], bl[0] - diag_length, bl[1] + diag_length),
+            create_line(ml[0], ml[1], ml[0] - straight_length, ml[1]),
+            create_line(tl[0], tl[1], tl[0] - diag_length, tl[1] - diag_length)
         ]
 
         for i in range(8):
@@ -233,7 +265,7 @@ class Enemy:
         steering_force = desired_velocity - self.velocity * (random.randint(1, 10) / 10)
         self.velocity += steering_force
 
-    def get_desired_direction(self):
+    def get_direction_to_player(self):
         dy = self.player.rect.centery - self.rect.centery
         dx = self.player.rect.centerx - self.rect.centerx
 
@@ -243,23 +275,110 @@ class Enemy:
             direction = direction.normalize()
         return direction
 
-    def update(self):
+    def move(self):
         self.velocity = self.velocity.normalize() * self.speed
         self.rect = self.rect.move(self.velocity)
+
+    def attack(self):
+        pass
+
+    def update(self, dt):
+        self.dt = dt
+        match self.state:
+            case "MOVE":
+                self.move()
+            case "ATTACK":
+                self.attack()
+
         for e in self.player.ectos:
             if e.rect.colliderect(self.rect) and e.is_active:
-                e.handle_enemy_hit()
+                e.handle_hit()
                 self.take_damage(e.damage)
 
     def draw(self, background: Surface):
-        self.sprite.fill(self.color)
         background.blit(self.sprite, (self.rect.x, self.rect.y))
+
+
+class ShooterShot(Projectile):
+    player: Player
+
+    def __init__(self, x, y, direction, player):
+        super().__init__(Rect(x, y, 16, 16), Surface((16, 16)), direction, 5, 2, True)
+        self.sprite.fill("Cyan")
+        self.player = player
+
+    def update(self):
+        center_x = self.rect.centerx
+        center_y = self.rect.centery
+
+        if center_y + 8 >= 700:
+            self.rect.y = 684
+            self.is_active = False
+
+        if center_y - 8 <= 0:
+            self.rect.y = 0
+            self.is_active = False
+
+        if center_x + 8 >= 1200:
+            self.rect.x = 1184
+            self.is_active = False
+
+        if center_x - 8 <= 0:
+            self.rect.x = 0
+            self.is_active = False
+
+        if self.rect.colliderect(self.player.rect):
+            self.player.take_damage(self.damage)
+            self.is_active = False
+
+        if self.is_active:
+            super().move()
+
+    def draw(self, background: Surface):
+        super().draw(background)
+
+
+class Shooter(Enemy):
+    shots: list[ShooterShot] = []
+
+    def __init__(self):
+        super().__init__(Rect(0, 0, 25, 25), Surface((25, 25)), 2, 3, 5, 2000)
+        self.sprite.fill("Red")
+
+    def move(self):
+        super().move()
+        self.last_attack += self.dt
+
+        if self.last_attack >= self.ATTACK_RATE:
+            self.last_attack = 0
+            self.state = "ATTACK"
+
+    def attack(self):
+        self.shots.append(
+            ShooterShot(self.rect.centerx, self.rect.centery, self.get_direction_to_player(), self.player))
+        self.state = "MOVE"
+
+    def update(self, dt):
+        super().update(dt)
+
+        shots_to_keep = []
+        for s in self.shots:
+            s.update()
+            if s.is_active:
+                shots_to_keep.append(s)
+
+        self.shots = shots_to_keep
+
+    def draw(self, background: Surface):
+        super().draw(background)
+
+        for s in self.shots:
+            s.draw(background)
 
 
 class EnemyFactory:
     _instance = None
     enemy_types = []
-    times_called = 0
 
     @classmethod
     def get_instance(cls):
@@ -269,8 +388,7 @@ class EnemyFactory:
 
     @classmethod
     def create_enemy(cls) -> Enemy:
-        e = Enemy(50, 50, 2, 5, Vector2(50, 50))
-        cls.times_called += 1
+        e = Shooter()
         return e
 
 
@@ -317,35 +435,29 @@ class EnemyManager:
             case 5:
                 return 500
 
-    def load_enemies_for_wave(self, curr_wave: int):
+    def load_enemies(self, curr_wave: int):
         self.spawn_rate = self.__get_spawn_rate(curr_wave)
         self.difficulty = self.__get_difficulty(curr_wave)
         self.last_spawn = 0
         self.wave_complete = False
-        self.__create_enemies()
 
-    def __create_enemies(self):
         while self.difficulty > 0:
             e = EnemyFactory.create_enemy()
-            if e.is_environmental:
-                self.spawned_enemies.append(e)
-            else:
-                self.unspawned_enemies.append(e)
+            self.unspawned_enemies.append(e)
             self.difficulty -= e.difficulty
 
-    def update(self, last_tick: int):
+    def update(self, dt: int):
         enemies_to_keep: list[Enemy] = []
 
         for i in range(len(self.spawned_enemies)):
             e = self.spawned_enemies[i]
-            desired_direction = e.get_desired_direction()
-            e.steer(desired_direction, self.spawned_enemies, i)
-            e.update()
+            e.steer(e.get_direction_to_player(), self.spawned_enemies, i)
+            e.update(dt)
             if e.health > 0:
                 enemies_to_keep.append(e)
 
         self.spawned_enemies = enemies_to_keep
-        self.last_spawn += last_tick
+        self.last_spawn += dt
 
         len_unspawned = len(self.unspawned_enemies)
         len_spawned = len(self.spawned_enemies)
@@ -571,12 +683,13 @@ class Game:
     def restart_game(self):
         # TODO IMPLEMENT PROPERLY
         self.curr_wave = 1
-        self.enemy_manager.load_enemies_for_wave(self.curr_wave)
+        self.enemy_manager.load_enemies(self.curr_wave)
         self.player.rect.x = 0
         self.player.rect.y = 0
         self.state = "WAVE"
 
     def update(self):
+        dt = self.clock.get_time()
         keys = pg.key.get_pressed()
 
         match self.state:
@@ -588,10 +701,8 @@ class Game:
                     self.state = "INFO"
                     self.prev_state = "WAVE"
 
-                last_tick = self.clock.get_time()
-
-                self.player.update(last_tick)
-                self.enemy_manager.update(last_tick)
+                self.player.update()
+                self.enemy_manager.update(dt)
 
                 if self.player.health < 0:
                     self.state = "GAME_OVER"
@@ -616,7 +727,7 @@ class Game:
                 if keys[pg.K_SPACE]:
                     self.shop.close()
                     self.curr_wave += 1
-                    self.enemy_manager.load_enemies_for_wave(self.curr_wave)
+                    self.enemy_manager.load_enemies(self.curr_wave)
                     self.state = "WAVE"
 
                 self.shop.update()
@@ -665,7 +776,7 @@ class Game:
         self.player = Player.get_instance()
         self.enemy_manager = EnemyManager.get_instance()
         self.shop = Shop().get_instance()
-        self.enemy_manager.load_enemies_for_wave(self.curr_wave)
+        self.enemy_manager.load_enemies(self.curr_wave)
         self.cursor = image.load("assets/sprites/player/cursor.png").convert_alpha()
 
         while self.RUNNING:
