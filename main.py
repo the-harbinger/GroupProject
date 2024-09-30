@@ -26,6 +26,33 @@ def create_line(x1, y1, x2, y2):
     return (x1, y1), (x2, y2)
 
 
+def check_wall_collision(rect: Rect) -> bool:
+    half_width = int(rect.w / 2)
+    half_height = int(rect.h / 2)
+
+    center_x = rect.centerx
+    center_y = rect.centery
+    collides: bool = False
+
+    if center_y + half_height >= WINDOW_HEIGHT - 100:
+        rect.y = WINDOW_HEIGHT - rect.h - 100
+        collides = True
+
+    if center_y - half_height <= 0:
+        rect.y = 0
+        collides = True
+
+    if center_x + half_width >= WINDOW_WIDTH:
+        rect.x = WINDOW_WIDTH - rect.width
+        collides = True
+
+    if center_x - half_width <= 0:
+        collides = True
+        rect.x = 0
+
+    return collides
+
+
 class Projectile:
     rect: Rect
     sprite: Surface
@@ -74,30 +101,10 @@ class Ectoplasm(Projectile):
         self.is_active = False
 
     def update(self):
-        center_x = self.rect.centerx
-        center_y = self.rect.centery
-
-        if center_y + 8 >= 700:
-            self.rect.y = 684
-            self.is_active = False
-
-        if center_y - 8 <= 0:
-            self.rect.y = 0
-            self.is_active = False
-
-        if center_x + 8 >= 1200:
-            self.rect.x = 1184
-            self.is_active = False
-
-        if center_x - 8 <= 0:
-            self.rect.x = 0
-            self.is_active = False
-
         if self.is_active:
             self.distance_traveled += self.direction.magnitude() * self.speed
             super().move()
-
-            if self.distance_traveled >= self.max_range:
+            if self.distance_traveled >= self.max_range or check_wall_collision(self.rect):
                 self.is_active = False
 
 
@@ -123,6 +130,7 @@ class Player:
     def get_instance(cls):
         if cls._instance is None:
             cls._instance = cls.__new__(cls)
+
         return cls._instance
 
     @staticmethod
@@ -143,6 +151,8 @@ class Player:
         direction = self.get_direction(keys)
         self.velocity = self.speed * direction
         self.rect = self.rect.move(self.velocity)
+
+        check_wall_collision(self.rect)
 
         c_pressed = keys[pg.K_c]
         if c_pressed and len(self.ectos) != self.max_num_ecto:
@@ -200,7 +210,7 @@ class Enemy:
     steer_directions = [V_NORTH, V_NORTH_EAST, V_EAST, V_SOUTH_EAST, V_SOUTH, V_SOUTH_WEST, V_WEST, V_NORTH_WEST]
     dt = 0
 
-    def __init__(self, rect: Rect, sprite: Surface, speed: int, difficulty: int, health: int, ATTACK_RATE: int):
+    def __init__(self, rect: Rect, sprite: Surface, speed: int, difficulty: int, health: int, attack_rate: int):
         self.player = Player.get_instance()
         self.rect = rect
         self.sprite = sprite
@@ -208,7 +218,7 @@ class Enemy:
         self.health = health
         self.max_health = health
         self.speed = speed
-        self.ATTACK_RATE = ATTACK_RATE
+        self.ATTACK_RATE = attack_rate
         self.sprite.fill("Green")
 
     def take_damage(self, damage):
@@ -303,33 +313,22 @@ class ShooterShot(Projectile):
     player: Player
 
     def __init__(self, x, y, direction, player):
-        super().__init__(Rect(x, y, 16, 16), Surface((16, 16)), direction, 5, 2, True)
-        self.sprite.fill("Cyan")
+        super().__init__(Rect(x, y, 16, 16),
+                         image.load("assets/sprites/enemy/enemy_projectile.png").convert_alpha(),
+                         direction,
+                         5,
+                         2,
+                         True)
         self.player = player
 
     def update(self):
-        center_x = self.rect.centerx
-        center_y = self.rect.centery
+        if self.is_active:
+            if check_wall_collision(self.rect):
+                self.is_active = False
 
-        if center_y + 8 >= 700:
-            self.rect.y = 684
-            self.is_active = False
-
-        if center_y - 8 <= 0:
-            self.rect.y = 0
-            self.is_active = False
-
-        if center_x + 8 >= 1200:
-            self.rect.x = 1184
-            self.is_active = False
-
-        if center_x - 8 <= 0:
-            self.rect.x = 0
-            self.is_active = False
-
-        if self.rect.colliderect(self.player.rect):
-            self.player.take_damage(self.damage)
-            self.is_active = False
+            if self.rect.colliderect(self.player.rect):
+                self.is_active = False
+                self.player.take_damage(self.damage)
 
         if self.is_active:
             super().move()
@@ -355,7 +354,8 @@ class Shooter(Enemy):
 
     def attack(self):
         self.shots.append(
-            ShooterShot(self.rect.centerx, self.rect.centery, self.get_direction_to_player(), self.player))
+            ShooterShot(self.rect.centerx - 8, self.rect.centery - 8, self.get_direction_to_player(), self.player)
+        )
         self.state = "MOVE"
 
     def update(self, dt):
@@ -475,13 +475,13 @@ class EnemyManager:
 
 
 class Upgrade:
-    player = None
-    cost = 0
-    rect: Rect = None
-    card: Surface = None
+    player: Player
+    cost: int
+    rect: Rect
+    card: Surface
+    sold_card = image.load("assets/UI/sold_card.png").convert_alpha()
     clicked = False
     bought = False
-    sold_card = image.load("assets/UI/sold_card.png").convert_alpha()
 
     def __init__(self):
         self.rect = Rect(0, 0, 200, 200)
@@ -501,7 +501,7 @@ class Upgrade:
             background.blit(self.card, (self.rect.x, self.rect.y))
 
 
-# IMPLEMENT UPGRADES BELOW THIS LINE
+# UPGRADES BELOW THIS LINE
 class MaxHealthUpgrade(Upgrade):
     def __init__(self):
         super().__init__()
@@ -595,9 +595,8 @@ class Shop:
         RestoreHealthUpgrade()
     ]
 
-    upgrade_1 = None
-    upgrade_2 = None
-    upgrade_3 = None
+    shop_upgrades: list[Upgrade] = []
+    positions: list[tuple] = [rect.topleft, rect.midtop, rect.topright]
 
     @classmethod
     def get_instance(cls):
@@ -609,32 +608,22 @@ class Shop:
         return self.upgrades.pop(random.randint(0, len(self.upgrades) - 1))
 
     def get_upgrades(self):
-        self.upgrade_1 = self.rand_upgrade()
-        self.upgrade_2 = self.rand_upgrade()
-        self.upgrade_3 = self.rand_upgrade()
-
-        self.upgrade_1.set_position(self.rect.topleft)
-        self.upgrade_2.set_position(self.rect.midtop)
-        self.upgrade_3.set_position(self.rect.topright)
+        for i in range(3):
+            self.shop_upgrades.append(self.rand_upgrade())
+            self.shop_upgrades[i].set_position(self.positions[i])
 
     def close(self):
-        self.upgrade_1.bought = False
-        self.upgrade_2.bought = False
-        self.upgrade_3.bought = False
-
-        self.upgrades.append(self.upgrade_1)
-        self.upgrades.append(self.upgrade_2)
-        self.upgrades.append(self.upgrade_3)
+        for upgrade in self.shop_upgrades:
+            upgrade.bought = False
+            self.upgrades.append(upgrade)
 
     def update(self):
-        self.upgrade_1.update()
-        self.upgrade_2.update()
-        self.upgrade_3.update()
+        for upgrade in self.shop_upgrades:
+            upgrade.update()
 
     def draw(self, background):
-        self.upgrade_1.draw(background)
-        self.upgrade_2.draw(background)
-        self.upgrade_3.draw(background)
+        for upgrade in self.shop_upgrades:
+            upgrade.draw(background)
 
 
 class UI:
