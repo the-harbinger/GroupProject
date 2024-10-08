@@ -1,4 +1,8 @@
+import math
+
 import pygame as pg
+import sys
+from pygame.locals import *
 from pygame import Vector2, Rect, Surface, time, mouse, image, display
 import random
 
@@ -9,6 +13,10 @@ mouse.set_visible(False)
 WINDOW_WIDTH = 1200
 WINDOW_HEIGHT = 800
 SCREEN = display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+GAME_HEIGHT = WINDOW_HEIGHT - 100
+GAME_WIDTH = WINDOW_WIDTH
+GAME_RECT = Rect(0, 0, GAME_WIDTH, GAME_HEIGHT)
+GAME_BACKGROUND: Surface = Surface((GAME_WIDTH, GAME_HEIGHT))
 SCREEN.fill("Blue")
 
 V_ZERO = Vector2(0, 0)
@@ -27,26 +35,21 @@ def create_line(x1, y1, x2, y2):
 
 
 def check_wall_collision(rect: Rect) -> bool:
-    half_width = int(rect.w / 2)
-    half_height = int(rect.h / 2)
-
-    center_x = rect.centerx
-    center_y = rect.centery
     collides: bool = False
 
-    if center_y + half_height >= WINDOW_HEIGHT - 100:
+    if rect.bottom >= WINDOW_HEIGHT - 100:
         rect.y = WINDOW_HEIGHT - rect.h - 100
         collides = True
 
-    if center_y - half_height <= 0:
+    if rect.top <= 0:
         rect.y = 0
         collides = True
 
-    if center_x + half_width >= WINDOW_WIDTH:
+    if rect.right >= WINDOW_WIDTH:
         rect.x = WINDOW_WIDTH - rect.width
         collides = True
 
-    if center_x - half_width <= 0:
+    if rect.left <= 0:
         collides = True
         rect.x = 0
 
@@ -80,8 +83,8 @@ class Projectile:
     def update(self):
         pass
 
-    def draw(self, background: Surface):
-        background.blit(self.sprite, Vector2(self.rect.x, self.rect.y))
+    def draw(self):
+        GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
 
 
 class Ectoplasm(Projectile):
@@ -89,8 +92,10 @@ class Ectoplasm(Projectile):
     distance_traveled = 0
     max_range = 250
 
-    def __init__(self, x, y, direction):
-        super().__init__(Rect(x + 8, y + 8, 16, 16),
+    def __init__(self, center, direction):
+        rect = Rect(0, 0, 16, 16)
+        rect.center = center
+        super().__init__(rect,
                          image.load("assets/sprites/player/ectoplasm.png").convert_alpha(),
                          direction,
                          10,
@@ -130,13 +135,14 @@ class Player:
     def get_instance(cls):
         if cls._instance is None:
             cls._instance = cls.__new__(cls)
+            cls._instance.rect.center = GAME_RECT.center
 
         return cls._instance
 
     @staticmethod
     def get_direction(keys):
-        x_strength = int(keys[pg.K_RIGHT]) - int(keys[pg.K_LEFT])
-        y_strength = int(keys[pg.K_DOWN]) - int(keys[pg.K_UP])
+        x_strength = int(keys[K_RIGHT]) - int(keys[K_LEFT])
+        y_strength = int(keys[K_DOWN]) - int(keys[K_UP])
 
         direction = Vector2(x_strength, y_strength)
         if x_strength != 0 or y_strength != 0:
@@ -154,17 +160,17 @@ class Player:
 
         check_wall_collision(self.rect)
 
-        c_pressed = keys[pg.K_c]
-        if c_pressed and len(self.ectos) != self.max_num_ecto:
+        c_pressed = keys[K_c]
+        if c_pressed and len(self.ectos) < self.max_num_ecto:
             self.state = "SHOOT"
 
     def shoot(self):
         keys = pg.key.get_pressed()
         direction = self.get_direction(keys)
-        c_pressed = keys[pg.K_c]
+        c_pressed = keys[K_c]
         if not c_pressed:
             if direction != V_ZERO:
-                ecto = Ectoplasm(self.rect.x, self.rect.y, direction)
+                ecto = Ectoplasm(self.rect.center, direction)
                 self.ectos.append(ecto)
                 self.shoot_pressed = False
                 self.num_ecto += 1
@@ -189,10 +195,10 @@ class Player:
                 uncollected_ectos.append(ecto)
             self.ectos = uncollected_ectos
 
-    def draw(self, background: Surface):
+    def draw(self):
         for ecto in self.ectos:
-            ecto.draw(background)
-        background.blit(self.sprite, (self.rect.x, self.rect.y))
+            ecto.draw()
+        GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
 
 
 class Enemy:
@@ -200,31 +206,52 @@ class Enemy:
     rect: Rect = Rect(0, 0, 50, 50)
     sprite: Surface = Surface((50, 50))
     difficulty = 2
-    speed = 1.5
+    speed = 2
     health = 0
     max_health = 0
-    ATTACK_RATE = 0
+    attack_rate = 0
     last_attack = 0
+    telegraph_time = 0
+    telegraph_timer = 0
     velocity: Vector2 = Vector2(0, 0)
     state = "MOVE"
     steer_directions = [V_NORTH, V_NORTH_EAST, V_EAST, V_SOUTH_EAST, V_SOUTH, V_SOUTH_WEST, V_WEST, V_NORTH_WEST]
     dt = 0
 
-    def __init__(self, rect: Rect, sprite: Surface, speed: int, difficulty: int, health: int, attack_rate: int):
-        self.player = Player.get_instance()
-        self.rect = rect
+    def __init__(self, w, h, sprite: Surface, speed: int, difficulty: int, health: int, attack_rate: int,
+                 outside_spawn: bool, telegraph_time: int):
+        if outside_spawn:
+            side = random.randint(1, 4)
+            x = 0
+            y = 0
+
+            match side:
+                case 1:
+                    y = random.randint(0, GAME_HEIGHT)
+                case 2:
+                    x = random.randint(0, GAME_WIDTH)
+                case 3:
+                    x = random.randint(0, GAME_WIDTH)
+                    y = GAME_HEIGHT
+                case 4:
+                    x = GAME_WIDTH
+                    y = random.randint(0, GAME_HEIGHT)
+            self.rect = Rect(x, y, w, h)
+
         self.sprite = sprite
         self.difficulty = difficulty
         self.health = health
         self.max_health = health
         self.speed = speed
-        self.ATTACK_RATE = attack_rate
+        self.attack_rate = attack_rate
+        self.telegraph_time = telegraph_time
         self.sprite.fill("Green")
 
     def take_damage(self, damage):
         self.health -= damage
 
-    def steer(self, desired_direction, enemies: list, index):
+    def steer(self, enemies: list, index):
+        desired_direction = self.get_direction_to_player()
         interest_weights = []
         danger_weights = [0, 0, 0, 0, 0, 0, 0, 0]
         for steer_dir in self.steer_directions:
@@ -240,7 +267,7 @@ class Enemy:
         tl = self.rect.topleft
 
         diag_length = 1
-        straight_length = 5
+        straight_length = 2
 
         steer_rays = [
             create_line(mt[0], mt[1], mt[0], mt[1] - straight_length),
@@ -272,7 +299,7 @@ class Enemy:
             if steer_map[best_direction_index] < interest:
                 best_direction_index = i
         desired_velocity = self.steer_directions[best_direction_index] * self.speed
-        steering_force = desired_velocity - self.velocity * (random.randint(1, 10) / 10)
+        steering_force = desired_velocity - self.velocity * 0.5
         self.velocity += steering_force
 
     def get_direction_to_player(self):
@@ -285,12 +312,25 @@ class Enemy:
             direction = direction.normalize()
         return direction
 
+    def get_distance_to_player(self):
+        return math.sqrt((abs(self.player.rect.centery - self.rect.centery)**2) +
+                         (abs(self.player.rect.centerx - self.rect.centerx)**2))
+
     def move(self):
-        self.velocity = self.velocity.normalize() * self.speed
+        if self.velocity != V_ZERO:
+            self.velocity = self.velocity.normalize() * self.speed
         self.rect = self.rect.move(self.velocity)
 
     def attack(self):
         pass
+
+    def telegraph(self):
+        self.telegraph_timer += self.dt
+        self.sprite.fill("Cyan")
+        if self.telegraph_timer >= self.telegraph_time:
+            self.telegraph_timer = 0
+            self.sprite.fill("Green")
+            self.state = "ATTACK"
 
     def update(self, dt):
         self.dt = dt
@@ -299,27 +339,61 @@ class Enemy:
                 self.move()
             case "ATTACK":
                 self.attack()
+            case "TELEGRAPH":
+                self.telegraph()
 
         for e in self.player.ectos:
             if e.rect.colliderect(self.rect) and e.is_active:
                 e.handle_hit()
                 self.take_damage(e.damage)
 
-    def draw(self, background: Surface):
-        background.blit(self.sprite, (self.rect.x, self.rect.y))
+    def draw(self):
+        GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
 
 
-class ShooterShot(Projectile):
-    player: Player
+class Dasher(Enemy):
+    dash_speed = 10
+    base_speed = 2
+    dash_time = 200
+    dash_timer = 0
+    dash_direction: Vector2 = V_ZERO
 
-    def __init__(self, x, y, direction, player):
-        super().__init__(Rect(x, y, 16, 16),
+    def __init__(self):
+        super().__init__(25, 25, Surface((16, 16)), 2, 1, 5, 2000, True, 300)
+
+    def move(self):
+        self.speed = self.base_speed
+        super().move()
+        self.last_attack += self.dt
+
+        if self.last_attack >= self.attack_rate and self.get_distance_to_player() <= 100:
+            self.dash_direction = self.get_direction_to_player()
+            self.state = "TELEGRAPH"
+            self.last_attack = 0
+
+    def attack(self):
+        self.speed = self.dash_speed
+        self.velocity = self.dash_direction * self.speed
+        super().move()
+        self.dash_timer += self.dt
+
+        if self.dash_timer >= self.dash_time:
+            self.dash_timer = 0
+            self.state = "MOVE"
+
+
+class EnemyProjectile(Projectile):
+    player: Player = Player.get_instance()
+
+    def __init__(self, center, direction):
+        rect = Rect(0, 0, 16, 16)
+        rect.center = center
+        super().__init__(rect,
                          image.load("assets/sprites/enemy/enemy_projectile.png").convert_alpha(),
                          direction,
                          5,
                          2,
                          True)
-        self.player = player
 
     def update(self):
         if self.is_active:
@@ -333,47 +407,41 @@ class ShooterShot(Projectile):
         if self.is_active:
             super().move()
 
-    def draw(self, background: Surface):
-        super().draw(background)
-
 
 class Shooter(Enemy):
-    shots: list[ShooterShot] = []
+    projectiles: list[EnemyProjectile] = []
 
     def __init__(self):
-        super().__init__(Rect(0, 0, 25, 25), Surface((25, 25)), 2, 3, 5, 2000)
+        super().__init__(25, 25, Surface((25, 25)), 2, 3, 5, 2000, True, 0)
         self.sprite.fill("Red")
 
     def move(self):
         super().move()
         self.last_attack += self.dt
 
-        if self.last_attack >= self.ATTACK_RATE:
+        if self.last_attack >= self.attack_rate:
             self.last_attack = 0
             self.state = "ATTACK"
 
     def attack(self):
-        self.shots.append(
-            ShooterShot(self.rect.centerx - 8, self.rect.centery - 8, self.get_direction_to_player(), self.player)
-        )
+        self.projectiles.append(EnemyProjectile(self.rect.center, self.get_direction_to_player()))
         self.state = "MOVE"
 
     def update(self, dt):
         super().update(dt)
 
-        shots_to_keep = []
-        for s in self.shots:
+        projectiles_to_keep = []
+        for s in self.projectiles:
             s.update()
             if s.is_active:
-                shots_to_keep.append(s)
+                projectiles_to_keep.append(s)
 
-        self.shots = shots_to_keep
+        self.projectiles = projectiles_to_keep
 
-    def draw(self, background: Surface):
-        super().draw(background)
-
-        for s in self.shots:
-            s.draw(background)
+    def draw(self):
+        super().draw()
+        for s in self.projectiles:
+            s.draw()
 
 
 class EnemyFactory:
@@ -388,7 +456,7 @@ class EnemyFactory:
 
     @classmethod
     def create_enemy(cls) -> Enemy:
-        e = Shooter()
+        e = Dasher()
         return e
 
 
@@ -396,6 +464,7 @@ class EnemyManager:
     _instance = None
     unspawned_enemies: list[Enemy] = []
     spawned_enemies: list[Enemy] = []
+    dead_projectiles: list[EnemyProjectile] = []
     difficulty = 0
     spawn_rate = 0
     last_spawn = 0
@@ -451,11 +520,22 @@ class EnemyManager:
 
         for i in range(len(self.spawned_enemies)):
             e = self.spawned_enemies[i]
-            e.steer(e.get_direction_to_player(), self.spawned_enemies, i)
+            e.steer(self.spawned_enemies, i)
             e.update(dt)
+
             if e.health > 0:
                 enemies_to_keep.append(e)
 
+            elif e.__class__ == Shooter:
+                self.dead_projectiles = self.dead_projectiles + e.projectiles
+
+        keep_projectiles = []
+        for p in self.dead_projectiles:
+            p.update()
+            if p.is_active:
+                keep_projectiles.append(p)
+
+        self.dead_projectiles = keep_projectiles
         self.spawned_enemies = enemies_to_keep
         self.last_spawn += dt
 
@@ -469,13 +549,16 @@ class EnemyManager:
         if len_unspawned <= 0 and len_spawned <= 0:
             self.wave_complete = True
 
-    def draw(self, background: Surface):
+    def draw(self):
         for e in self.spawned_enemies:
-            e.draw(background)
+            e.draw()
+
+        for p in self.dead_projectiles:
+            p.draw()
 
 
 class Upgrade:
-    player: Player
+    player = Player.get_instance()
     cost: int
     rect: Rect
     card: Surface
@@ -483,106 +566,66 @@ class Upgrade:
     clicked = False
     bought = False
 
-    def __init__(self):
+    def __init__(self, cost, card):
         self.rect = Rect(0, 0, 200, 200)
-        self.player = Player.get_instance()
+        self.card = card
+        self.cost = cost
 
     def set_position(self, position: tuple):
         self.rect.x = position[0]
         self.rect.y = position[1]
 
-    def update(self):
+    def apply_upgrade(self):
         pass
 
-    def draw(self, background: Surface):
+    def update(self):
+        if self.bought or not self.rect.collidepoint(mouse.get_pos()):
+            self.clicked = False
+            return
+
+        pressed = mouse.get_pressed()[0]
+
+        if pressed:
+            self.clicked = True
+            time.wait(120)
+
+        if self.clicked and not pressed:
+            if self.player.num_coins >= self.cost:
+                self.player.num_coins -= self.cost
+                self.bought = True
+                self.apply_upgrade()
+            self.clicked = False
+
+    def draw(self):
         if self.bought:
-            background.blit(self.sold_card, (self.rect.x, self.rect.y))
+            GAME_BACKGROUND.blit(self.sold_card, (self.rect.x, self.rect.y))
         else:
-            background.blit(self.card, (self.rect.x, self.rect.y))
+            GAME_BACKGROUND.blit(self.card, (self.rect.x, self.rect.y))
 
 
 # UPGRADES BELOW THIS LINE
 class MaxHealthUpgrade(Upgrade):
     def __init__(self):
-        super().__init__()
-        self.cost = 5
-        self.card = image.load("assets/UI/mhu_card.png").convert_alpha()
+        super().__init__(5, image.load("assets/UI/mhu_card.png").convert())
 
-    def update(self):
-        if self.bought or not self.rect.collidepoint(mouse.get_pos()):
-            self.clicked = False
-            return
-
-        pressed = mouse.get_pressed()[0]
-        if pressed:
-            self.clicked = True
-            time.wait(120)
-
-        if self.clicked and not pressed:
-            if self.player.num_coins >= self.cost:
-                self.player.num_coins -= self.cost
-                self.player.max_health += 1
-                self.bought = True
-            self.clicked = False
-
-    def draw(self, background: Surface):
-        super().draw(background)
+    def apply_upgrade(self):
+        self.player.max_health += 1
 
 
 class NumEctoUpgrade(Upgrade):
     def __init__(self):
-        super().__init__()
-        self.cost = 5
-        self.card = image.load("assets/UI/neu_card.png").convert_alpha()
+        super().__init__(5, image.load("assets/UI/neu_card.png").convert())
 
-    def update(self):
-        if self.bought or not self.rect.collidepoint(mouse.get_pos()):
-            self.clicked = False
-            return
-
-        pressed = mouse.get_pressed()[0]
-
-        if pressed:
-            self.clicked = True
-            time.wait(120)
-
-        if self.clicked and not pressed:
-            if self.player.num_coins >= self.cost:
-                self.player.num_coins -= self.cost
-                self.player.max_num_ecto += 1
-                self.bought = True
-            self.clicked = False
-
-    def draw(self, background: Surface):
-        super().draw(background)
+    def apply_upgrade(self):
+        self.player.max_num_ecto += 1
 
 
 class RestoreHealthUpgrade(Upgrade):
     def __init__(self):
-        super().__init__()
-        self.cost = 10
-        self.card = image.load("assets/UI/rhu_card.png").convert_alpha()
+        super().__init__(10, image.load("assets/UI/rhu_card.png").convert())
 
-    def update(self):
-        if self.bought or not self.rect.collidepoint(mouse.get_pos()):
-            self.clicked = False
-            return
-
-        pressed = mouse.get_pressed()[0]
-
-        if pressed:
-            self.clicked = True
-            time.wait(120)
-
-        if self.clicked and not pressed:
-            if self.player.num_coins >= self.cost:
-                self.player.num_coins -= self.cost
-                self.player.health = self.player.max_health
-                self.bought = True
-            self.clicked = False
-
-    def draw(self, background: Surface):
-        super().draw(background)
+    def apply_upgrade(self):
+        self.player.health = self.player.max_health
 
 
 class Shop:
@@ -621,9 +664,9 @@ class Shop:
         for upgrade in self.shop_upgrades:
             upgrade.update()
 
-    def draw(self, background):
+    def draw(self):
         for upgrade in self.shop_upgrades:
-            upgrade.draw(background)
+            upgrade.draw()
 
 
 class UI:
@@ -656,12 +699,11 @@ class Game:
     RUNNING = True
     curr_wave = 1
     MAX_WAVES = 3
-    background: Surface = Surface((WINDOW_WIDTH, WINDOW_HEIGHT - 100))
     clock = time.Clock()
     state = "HOME"
     prev_state = "WAVE"
     cursor = None
-    cursor_rect = Rect(0, 0, 16, 16)
+    cursor_rect = Rect(0, 0, 32, 32)
 
     @classmethod
     def get_instance(cls):
@@ -686,7 +728,7 @@ class Game:
                 self.state = "INFO"
 
             case "WAVE":
-                if keys[pg.K_i]:
+                if keys[K_i]:
                     self.state = "INFO"
                     self.prev_state = "WAVE"
 
@@ -697,10 +739,11 @@ class Game:
                     self.state = "GAME_OVER"
 
                 if self.enemy_manager.wave_complete:
-                    self.player.rect.x = (WINDOW_WIDTH / 2) - 16
-                    self.player.rect.y = (WINDOW_HEIGHT / 2) - 16
+                    self.player.rect.centerx = GAME_RECT.centerx
+                    self.player.rect.centery = GAME_RECT.centery
                     self.player.num_ecto = 0
                     self.player.ectos = []
+                    self.enemy_manager.dead_projectiles = []
 
                     if self.curr_wave < self.MAX_WAVES:
                         self.shop.get_upgrades()
@@ -709,11 +752,11 @@ class Game:
                         self.state = "GAME_OVER"
 
             case "SHOP":
-                if keys[pg.K_i]:
+                if keys[K_i]:
                     self.state = "INFO"
                     self.prev_state = "SHOP"
 
-                if keys[pg.K_SPACE]:
+                if keys[K_SPACE]:
                     self.shop.close()
                     self.curr_wave += 1
                     self.enemy_manager.load_enemies(self.curr_wave)
@@ -722,13 +765,13 @@ class Game:
                 self.shop.update()
 
             case "INFO":
-                if keys[pg.K_e]:
+                if keys[K_e]:
                     self.state = self.prev_state
 
             case "GAME_OVER":
-                if keys[pg.K_SPACE]:
+                if keys[K_SPACE]:
                     self.restart_game()
-                if keys[pg.K_e]:
+                if keys[K_e]:
                     self.RUNNING = False
 
         # TODO Update the UI
@@ -736,27 +779,27 @@ class Game:
     def draw(self):
         match self.state:
             case "WAVE":
-                SCREEN.blit(self.background, (0, 0))
-                self.background.fill("Black")
-                self.player.draw(self.background)
-                self.enemy_manager.draw(self.background)
+                SCREEN.blit(GAME_BACKGROUND, (0, 0))
+                GAME_BACKGROUND.fill("Black")
+                self.player.draw()
+                self.enemy_manager.draw()
 
             case "SHOP":
-                SCREEN.blit(self.background, (0, 0))
-                self.background.fill("Black")
-                self.shop.draw(self.background)
+                SCREEN.blit(GAME_BACKGROUND, (0, 0))
+                GAME_BACKGROUND.fill("Black")
+                self.shop.draw()
                 SCREEN.blit(self.cursor, mouse.get_pos())
 
             case "INFO":
                 # TODO CREATE INFO SCREEN
-                SCREEN.blit(self.background, (0, 0))
-                self.background.fill("Cyan")
+                SCREEN.blit(GAME_BACKGROUND, (0, 0))
+                GAME_BACKGROUND.fill("Cyan")
 
             case "GAME_OVER":
                 # TODO CREATE GAME OVER SCREEN
                 # TODO Show Victory or Defeat Screen Based on Player Health
-                SCREEN.blit(self.background, (0, 0))
-                self.background.fill("Green")
+                SCREEN.blit(GAME_BACKGROUND, (0, 0))
+                GAME_BACKGROUND.fill("Green")
 
         # TODO Draw the UI
         display.flip()
@@ -770,14 +813,13 @@ class Game:
 
         while self.RUNNING:
             for e in pg.event.get():
-                if e.type == pg.QUIT:
+                if e.type == QUIT:
                     pg.quit()
-                    self.RUNNING = False
+                    sys.exit()
 
-            if self.RUNNING:
-                self.update()
-                self.draw()
-                self.clock.tick(60)
+            self.update()
+            self.draw()
+            self.clock.tick(60)
 
 
 if __name__ == "__main__":
