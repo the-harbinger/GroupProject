@@ -37,16 +37,16 @@ def create_line(x1, y1, x2, y2):
 def check_wall_collision(rect: Rect) -> bool:
     collides: bool = False
 
-    if rect.bottom >= WINDOW_HEIGHT - 100:
-        rect.y = WINDOW_HEIGHT - rect.h - 100
+    if rect.bottom >= GAME_HEIGHT:
+        rect.y = GAME_HEIGHT - rect.h
         collides = True
 
     if rect.top <= 0:
         rect.y = 0
         collides = True
 
-    if rect.right >= WINDOW_WIDTH:
-        rect.x = WINDOW_WIDTH - rect.width
+    if rect.right >= GAME_WIDTH:
+        rect.x = GAME_WIDTH - rect.width
         collides = True
 
     if rect.left <= 0:
@@ -106,6 +106,7 @@ class Ectoplasm(Projectile):
         self.is_active = False
 
     def update(self):
+        print(self.max_range)
         if self.is_active:
             self.distance_traveled += self.direction.magnitude() * self.speed
             super().move()
@@ -141,8 +142,8 @@ class Player:
 
     @staticmethod
     def get_direction(keys):
-        x_strength = int(keys[K_RIGHT]) - int(keys[K_LEFT])
-        y_strength = int(keys[K_DOWN]) - int(keys[K_UP])
+        x_strength = (int(keys[K_RIGHT]) + int(keys[K_d])) - (int(keys[K_LEFT]) + int(keys[K_a]))
+        y_strength = (int(keys[K_DOWN]) + int(keys[K_s])) - (int(keys[K_UP] + int(keys[K_w])))
 
         direction = Vector2(x_strength, y_strength)
         if x_strength != 0 or y_strength != 0:
@@ -160,20 +161,25 @@ class Player:
 
         check_wall_collision(self.rect)
 
-        c_pressed = keys[K_c]
-        if c_pressed and len(self.ectos) < self.max_num_ecto:
+        shoot_pressed = mouse.get_pressed()[0]
+        if shoot_pressed and self.num_ecto < self.max_num_ecto:
             self.state = "SHOOT"
 
     def shoot(self):
-        keys = pg.key.get_pressed()
-        direction = self.get_direction(keys)
-        c_pressed = keys[K_c]
-        if not c_pressed:
-            if direction != V_ZERO:
-                ecto = Ectoplasm(self.rect.center, direction)
-                self.ectos.append(ecto)
-                self.shoot_pressed = False
-                self.num_ecto += 1
+        shoot_pressed = mouse.get_pressed()[0]
+        mouse_pos = mouse.get_pos()
+        dx = mouse_pos[0] - self.rect.centerx
+        dy = mouse_pos[1] - self.rect.centery
+
+        direction = Vector2(dx, dy)
+        if direction != V_ZERO:
+            direction = direction.normalize()
+
+        if not shoot_pressed:
+            ecto = Ectoplasm(self.rect.center, direction)
+            self.ectos.append(ecto)
+            self.shoot_pressed = False
+            self.num_ecto += 1
             self.state = "MOVE"
 
     def update(self):
@@ -266,8 +272,8 @@ class Enemy:
         ml = self.rect.midleft
         tl = self.rect.topleft
 
-        diag_length = 1
-        straight_length = 2
+        diag_length = 5
+        straight_length = 7
 
         steer_rays = [
             create_line(mt[0], mt[1], mt[0], mt[1] - straight_length),
@@ -320,6 +326,7 @@ class Enemy:
         if self.velocity != V_ZERO:
             self.velocity = self.velocity.normalize() * self.speed
         self.rect = self.rect.move(self.velocity)
+        check_wall_collision(self.rect)
 
     def attack(self):
         pass
@@ -352,21 +359,23 @@ class Enemy:
 
 
 class Dasher(Enemy):
-    dash_speed = 10
+    dash_speed = 15
     base_speed = 2
     dash_time = 200
     dash_timer = 0
     dash_direction: Vector2 = V_ZERO
 
     def __init__(self):
-        super().__init__(25, 25, Surface((16, 16)), 2, 1, 5, 2000, True, 300)
+        w = 25
+        h = 25
+        super().__init__(w, h, Surface((w, h)), 2, 1, 5, 2000, True, 300)
 
     def move(self):
         self.speed = self.base_speed
         super().move()
         self.last_attack += self.dt
 
-        if self.last_attack >= self.attack_rate and self.get_distance_to_player() <= 100:
+        if self.last_attack >= self.attack_rate and self.get_distance_to_player() <= 300:
             self.dash_direction = self.get_direction_to_player()
             self.state = "TELEGRAPH"
             self.last_attack = 0
@@ -412,10 +421,15 @@ class Shooter(Enemy):
     projectiles: list[EnemyProjectile] = []
 
     def __init__(self):
-        super().__init__(25, 25, Surface((25, 25)), 2, 3, 5, 2000, True, 0)
+        w = 25
+        h = 25
+        super().__init__(w, h, Surface((w, h)), 2, 3, 5, 2500, True, 0)
         self.sprite.fill("Red")
 
     def move(self):
+        if self.get_distance_to_player() <= 150:
+            self.velocity *= -1
+
         super().move()
         self.last_attack += self.dt
 
@@ -456,8 +470,12 @@ class EnemyFactory:
 
     @classmethod
     def create_enemy(cls) -> Enemy:
-        e = Dasher()
-        return e
+        rand_int = random.randint(1, 2)
+        match rand_int:
+            case 1:
+                return Shooter()
+            case 2:
+                return Dasher()
 
 
 class EnemyManager:
@@ -480,15 +498,15 @@ class EnemyManager:
     def __get_difficulty(curr_wave: int):
         match curr_wave:
             case 1:
-                return 5
+                return 10
             case 2:
-                return 7
+                return 17
             case 3:
-                return 12
+                return 22
             case 4:
-                return 18
+                return 28
             case 5:
-                return 25
+                return 35
 
     @staticmethod
     def __get_spawn_rate(curr_wave: int):
@@ -520,12 +538,11 @@ class EnemyManager:
 
         for i in range(len(self.spawned_enemies)):
             e = self.spawned_enemies[i]
-            e.steer(self.spawned_enemies, i)
             e.update(dt)
+            e.steer(self.spawned_enemies, i)
 
             if e.health > 0:
                 enemies_to_keep.append(e)
-
             elif e.__class__ == Shooter:
                 self.dead_projectiles = self.dead_projectiles + e.projectiles
 
@@ -788,7 +805,6 @@ class Game:
                 SCREEN.blit(GAME_BACKGROUND, (0, 0))
                 GAME_BACKGROUND.fill("Black")
                 self.shop.draw()
-                SCREEN.blit(self.cursor, mouse.get_pos())
 
             case "INFO":
                 # TODO CREATE INFO SCREEN
@@ -802,6 +818,7 @@ class Game:
                 GAME_BACKGROUND.fill("Green")
 
         # TODO Draw the UI
+        SCREEN.blit(self.cursor, mouse.get_pos())
         display.flip()
 
     def start(self) -> None:
