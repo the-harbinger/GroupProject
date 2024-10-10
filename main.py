@@ -2,21 +2,27 @@ import math
 
 import pygame as pg
 import sys
+
+import pygame.display
 from pygame.locals import *
-from pygame import Vector2, Rect, Surface, time, mouse, image, display
+from pygame import Vector2, Rect, Surface, time, mouse, image, display, mixer
 import random
 
+# GLOBALS
 pg.init()
 display.set_caption("Ecto-Blast-Em")
 mouse.set_visible(False)
 
-WINDOW_WIDTH = 1200
-WINDOW_HEIGHT = 800
+WINDOW_WIDTH = 1520
+WINDOW_HEIGHT = 820
+monitor_size = [pygame.display.Info().current_w, pygame.display.Info().current_h]
 SCREEN = display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
 GAME_HEIGHT = WINDOW_HEIGHT - 100
 GAME_WIDTH = WINDOW_WIDTH
 GAME_RECT = Rect(0, 0, GAME_WIDTH, GAME_HEIGHT)
 GAME_BACKGROUND: Surface = Surface((GAME_WIDTH, GAME_HEIGHT))
+CURSOR_RECT = Rect(0, 0, 32, 32)
+CURSOR = image.load("assets/sprites/player/cursor.png").convert_alpha()
 SCREEN.fill("Blue")
 
 V_ZERO = Vector2(0, 0)
@@ -62,7 +68,7 @@ class Projectile:
     direction: Vector2
     speed: int
     damage: int
-    velocity: Vector2
+    velocity: Vector2 = V_ZERO
     is_active: bool
 
     def __init__(self, rect: Rect, sprite: Surface, direction: Vector2, speed: int, damage: int, is_active: bool):
@@ -75,7 +81,8 @@ class Projectile:
 
     def move(self):
         self.velocity = self.direction * self.speed
-        self.rect = self.rect.move(self.velocity)
+        self.rect.centerx += self.velocity.x
+        self.rect.centery += self.velocity.y
 
     def handle_hit(self):
         pass
@@ -92,7 +99,7 @@ class Ectoplasm(Projectile):
     distance_traveled = 0
     max_range = 250
 
-    def __init__(self, center, direction):
+    def __init__(self, direction, center):
         rect = Rect(0, 0, 16, 16)
         rect.center = center
         super().__init__(rect,
@@ -106,12 +113,11 @@ class Ectoplasm(Projectile):
         self.is_active = False
 
     def update(self):
-        print(self.max_range)
+        self.distance_traveled += self.velocity.magnitude()
+        if self.distance_traveled >= self.max_range or check_wall_collision(self.rect):
+            self.is_active = False
         if self.is_active:
-            self.distance_traveled += self.direction.magnitude() * self.speed
             super().move()
-            if self.distance_traveled >= self.max_range or check_wall_collision(self.rect):
-                self.is_active = False
 
 
 class Player:
@@ -123,14 +129,16 @@ class Player:
     speed = 5
     num_coins = 15
     num_ecto = 0
-    max_num_ecto = 5
+    max_num_ecto = 1000
     phase_speed_modifier = 1.5
     phase_time = 0.33
     max_health = 10
     health = 10
     shoot_pressed: bool = False
-    shoot_direction: Vector2 = Vector2(0, -1)
+    shoot_direction: Vector2 = V_EAST
     state = "MOVE"
+    guide_width = 16
+    hurt_sound: mixer.Sound = mixer.Sound("assets/sounds/player_hurt.mp3")
 
     @classmethod
     def get_instance(cls):
@@ -146,7 +154,7 @@ class Player:
         y_strength = (int(keys[K_DOWN]) + int(keys[K_s])) - (int(keys[K_UP] + int(keys[K_w])))
 
         direction = Vector2(x_strength, y_strength)
-        if x_strength != 0 or y_strength != 0:
+        if direction.length() != 0:
             direction = direction.normalize()
         return direction
 
@@ -167,16 +175,15 @@ class Player:
 
     def shoot(self):
         shoot_pressed = mouse.get_pressed()[0]
-        mouse_pos = mouse.get_pos()
-        dx = mouse_pos[0] - self.rect.centerx
-        dy = mouse_pos[1] - self.rect.centery
+        dx = CURSOR_RECT.centerx - self.rect.centerx
+        dy = CURSOR_RECT.centery - self.rect.centery
 
         direction = Vector2(dx, dy)
-        if direction != V_ZERO:
+        if direction.length() != 0:
             direction = direction.normalize()
 
         if not shoot_pressed:
-            ecto = Ectoplasm(self.rect.center, direction)
+            ecto = Ectoplasm(direction, self.rect.center)
             self.ectos.append(ecto)
             self.shoot_pressed = False
             self.num_ecto += 1
@@ -201,9 +208,25 @@ class Player:
                 uncollected_ectos.append(ecto)
             self.ectos = uncollected_ectos
 
+    def __draw_guide(self):
+        start_point = Vector2(self.rect.center)
+        end_point = Vector2(CURSOR_RECT.center)
+        dx = end_point.x - start_point.x
+        dy = end_point.y - start_point.y
+
+        direction = Vector2(dx, dy)
+        if direction.length() != 0:
+            direction = direction.normalize()
+
+        end_point = (direction * Ectoplasm.max_range) + start_point
+        pg.draw.line(GAME_BACKGROUND, "White", start_point, end_point, self.guide_width)
+
     def draw(self):
         for ecto in self.ectos:
             ecto.draw()
+
+        if self.state == "SHOOT":
+            self.__draw_guide()
         GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
 
 
@@ -219,7 +242,7 @@ class Enemy:
     last_attack = 0
     telegraph_time = 0
     telegraph_timer = 0
-    velocity: Vector2 = Vector2(0, 0)
+    velocity: Vector2 = V_ZERO
     state = "MOVE"
     steer_directions = [V_NORTH, V_NORTH_EAST, V_EAST, V_SOUTH_EAST, V_SOUTH, V_SOUTH_WEST, V_WEST, V_NORTH_WEST]
     dt = 0
@@ -304,8 +327,10 @@ class Enemy:
             steer_map[i] = interest
             if steer_map[best_direction_index] < interest:
                 best_direction_index = i
-        desired_velocity = self.steer_directions[best_direction_index] * self.speed
-        steering_force = desired_velocity - self.velocity * 0.5
+        desired_velocity = (self.steer_directions[best_direction_index] + desired_direction)
+        if desired_velocity.length() != 0:
+            desired_velocity = desired_velocity.normalize() * self.speed
+        steering_force = desired_velocity - self.velocity
         self.velocity += steering_force
 
     def get_direction_to_player(self):
@@ -314,7 +339,7 @@ class Enemy:
 
         direction = Vector2(dx, dy)
 
-        if dy != 0 or dx != 0:
+        if direction.length() != 0:
             direction = direction.normalize()
         return direction
 
@@ -323,7 +348,7 @@ class Enemy:
                          (abs(self.player.rect.centerx - self.rect.centerx)**2))
 
     def move(self):
-        if self.velocity != V_ZERO:
+        if self.velocity.length() != 0:
             self.velocity = self.velocity.normalize() * self.speed
         self.rect = self.rect.move(self.velocity)
         check_wall_collision(self.rect)
@@ -368,7 +393,7 @@ class Dasher(Enemy):
     def __init__(self):
         w = 25
         h = 25
-        super().__init__(w, h, Surface((w, h)), 2, 1, 5, 2000, True, 300)
+        super().__init__(w, h, Surface((w, h)), 2, 1, 5, 2000, True,    300)
 
     def move(self):
         self.speed = self.base_speed
@@ -427,8 +452,8 @@ class Shooter(Enemy):
         self.sprite.fill("Red")
 
     def move(self):
-        if self.get_distance_to_player() <= 150:
-            self.velocity *= -1
+        if self.get_distance_to_player() <= 250:
+            self.velocity -= self.get_direction_to_player() * self.speed * 2
 
         super().move()
         self.last_attack += self.dt
@@ -498,7 +523,7 @@ class EnemyManager:
     def __get_difficulty(curr_wave: int):
         match curr_wave:
             case 1:
-                return 10
+                return 2
             case 2:
                 return 17
             case 3:
@@ -535,11 +560,10 @@ class EnemyManager:
 
     def update(self, dt: int):
         enemies_to_keep: list[Enemy] = []
-
         for i in range(len(self.spawned_enemies)):
             e = self.spawned_enemies[i]
-            e.update(dt)
             e.steer(self.spawned_enemies, i)
+            e.update(dt)
 
             if e.health > 0:
                 enemies_to_keep.append(e)
@@ -623,7 +647,7 @@ class Upgrade:
 # UPGRADES BELOW THIS LINE
 class MaxHealthUpgrade(Upgrade):
     def __init__(self):
-        super().__init__(5, image.load("assets/UI/mhu_card.png").convert())
+        super().__init__(5, image.load("assets/UI/max_health_upgrade_card.png").convert())
 
     def apply_upgrade(self):
         self.player.max_health += 1
@@ -631,15 +655,23 @@ class MaxHealthUpgrade(Upgrade):
 
 class NumEctoUpgrade(Upgrade):
     def __init__(self):
-        super().__init__(5, image.load("assets/UI/neu_card.png").convert())
+        super().__init__(5, image.load("assets/UI/num_ectoplasm_upgrade_card.png").convert())
 
     def apply_upgrade(self):
         self.player.max_num_ecto += 1
 
 
+class EctoRangeUpgrade(Upgrade):
+    def __init__(self):
+        super().__init__(5, image.load("assets/UI/ectoplasm_range_upgrade_card.png").convert())
+
+    def apply_upgrade(self):
+        Ectoplasm.max_range *= 1.1
+
+
 class RestoreHealthUpgrade(Upgrade):
     def __init__(self):
-        super().__init__(10, image.load("assets/UI/rhu_card.png").convert())
+        super().__init__(10, image.load("assets/UI/restore_health_upgrade_card.png").convert())
 
     def apply_upgrade(self):
         self.player.health = self.player.max_health
@@ -647,35 +679,41 @@ class RestoreHealthUpgrade(Upgrade):
 
 class Shop:
     _instance = None
-    rect = Rect(200, 200, 600, 200)
+    rect: Rect
 
-    upgrades: list[Upgrade] = [
+    all_upgrades: list[Upgrade] = [
         MaxHealthUpgrade(),
         NumEctoUpgrade(),
-        RestoreHealthUpgrade()
+        RestoreHealthUpgrade(),
+        EctoRangeUpgrade()
     ]
-
     shop_upgrades: list[Upgrade] = []
-    positions: list[tuple] = [rect.topleft, rect.midtop, rect.topright]
+    positions: list[tuple]
 
     @classmethod
     def get_instance(cls):
         if cls._instance is None:
             cls._instance = cls.__new__(cls)
+            cls.rect = Rect(200, 200, GAME_WIDTH, 200)
+            cls.rect.center = GAME_RECT.center
+            cls.positions: list[tuple] = [tuple([cls.rect.midtop[0] - 400, cls.rect.midtop[1]]),
+                                          tuple([cls.rect.midtop[0] - 100, cls.rect.midtop[1]]),
+                                          tuple([cls.rect.midtop[0] + 200, cls.rect.midtop[1]])]
         return cls._instance
 
-    def rand_upgrade(self) -> Upgrade:
-        return self.upgrades.pop(random.randint(0, len(self.upgrades) - 1))
+    def get_rand_upgrade(self) -> Upgrade:
+        return self.all_upgrades.pop(random.randint(0, len(self.all_upgrades) - 1))
 
-    def get_upgrades(self):
+    def set_upgrades(self):
         for i in range(3):
-            self.shop_upgrades.append(self.rand_upgrade())
+            self.shop_upgrades.append(self.get_rand_upgrade())
             self.shop_upgrades[i].set_position(self.positions[i])
 
     def close(self):
         for upgrade in self.shop_upgrades:
             upgrade.bought = False
-            self.upgrades.append(upgrade)
+            self.all_upgrades.append(upgrade)
+        self.shop_upgrades = []
 
     def update(self):
         for upgrade in self.shop_upgrades:
@@ -719,8 +757,6 @@ class Game:
     clock = time.Clock()
     state = "HOME"
     prev_state = "WAVE"
-    cursor = None
-    cursor_rect = Rect(0, 0, 32, 32)
 
     @classmethod
     def get_instance(cls):
@@ -763,7 +799,7 @@ class Game:
                     self.enemy_manager.dead_projectiles = []
 
                     if self.curr_wave < self.MAX_WAVES:
-                        self.shop.get_upgrades()
+                        self.shop.set_upgrades()
                         self.state = "SHOP"
                     else:
                         self.state = "GAME_OVER"
@@ -818,7 +854,10 @@ class Game:
                 GAME_BACKGROUND.fill("Green")
 
         # TODO Draw the UI
-        SCREEN.blit(self.cursor, mouse.get_pos())
+        mouse_pos = mouse.get_pos()
+        CURSOR_RECT.x = mouse_pos[0]
+        CURSOR_RECT.y = mouse_pos[1]
+        SCREEN.blit(CURSOR, (CURSOR_RECT.x, CURSOR_RECT.y))
         display.flip()
 
     def start(self) -> None:
@@ -826,13 +865,16 @@ class Game:
         self.enemy_manager = EnemyManager.get_instance()
         self.shop = Shop().get_instance()
         self.enemy_manager.load_enemies(self.curr_wave)
-        self.cursor = image.load("assets/sprites/player/cursor.png").convert_alpha()
 
         while self.RUNNING:
             for e in pg.event.get():
                 if e.type == QUIT:
                     pg.quit()
                     sys.exit()
+                if e.type == KEYDOWN:
+                    if e.key == K_ESCAPE:
+                        pg.quit()
+                        sys.exit()
 
             self.update()
             self.draw()
