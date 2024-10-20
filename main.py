@@ -5,25 +5,38 @@ import sys
 
 import pygame.display
 from pygame.locals import *
-from pygame import Vector2, Rect, Surface, time, mouse, image, display, mixer
+from pygame import Vector2, Rect, Surface, Color, time, mouse, image, display, mixer
 import random
 
 # GLOBALS
 pg.init()
 display.set_caption("Ecto-Blast-Em")
-mouse.set_visible(False)
-
-WINDOW_WIDTH = 1520
-WINDOW_HEIGHT = 820
+WINDOW_WIDTH = 1280
+WINDOW_HEIGHT = 720
 monitor_size = [pygame.display.Info().current_w, pygame.display.Info().current_h]
 SCREEN = display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-GAME_HEIGHT = WINDOW_HEIGHT - 100
+SCREEN.fill("Black")
+GAME_HEIGHT = WINDOW_HEIGHT - 80
 GAME_WIDTH = WINDOW_WIDTH
 GAME_RECT = Rect(0, 0, GAME_WIDTH, GAME_HEIGHT)
 GAME_BACKGROUND: Surface = Surface((GAME_WIDTH, GAME_HEIGHT))
+
+mixer.init()
+mixer.pre_init()
+atmosphere_sound = mixer.Sound("assets/sounds/horror_atmosphere_0.wav")
+atmosphere_sound.set_volume(0.35)
+ecto_shoot_sound = mixer.Sound("assets/sounds/ecto_shoot_0.wav")
+atmosphere_sound.play(-1)
+
+mouse.set_visible(False)
 CURSOR_RECT = Rect(0, 0, 32, 32)
 CURSOR = image.load("assets/sprites/player/cursor.png").convert_alpha()
-SCREEN.fill("Blue")
+
+TICK_RATE = 60
+
+WHITE = (255, 255, 255)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
 
 V_ZERO = Vector2(0, 0)
 V_NORTH = Vector2(0, -1)
@@ -62,6 +75,19 @@ def check_wall_collision(rect: Rect) -> bool:
     return collides
 
 
+def get_rand_point_for_rect(rect: Rect) -> Vector2:
+    return Vector2(random.randint(0, GAME_WIDTH - rect.width), random.randint(0, GAME_HEIGHT - rect.height))
+
+
+def generate_empty_grid(num_rows: int, num_cols: int) -> list[list]:
+    grid = []
+    for i in range(num_rows):
+        row = [None for _ in range(num_cols)]
+        grid.append(row)
+
+    return grid
+
+
 class Projectile:
     rect: Rect
     sprite: Surface
@@ -98,6 +124,7 @@ class Ectoplasm(Projectile):
     is_collected = False
     distance_traveled = 0
     max_range = 250
+    damage = 5
 
     def __init__(self, direction, center):
         rect = Rect(0, 0, 16, 16)
@@ -108,6 +135,7 @@ class Ectoplasm(Projectile):
                          10,
                          5,
                          True)
+        self.damage = 5
 
     def handle_hit(self):
         self.is_active = False
@@ -129,16 +157,16 @@ class Player:
     speed = 5
     num_coins = 15
     num_ecto = 0
-    max_num_ecto = 1000
+    max_num_ecto = 5
     phase_speed_modifier = 1.5
     phase_time = 0.33
-    max_health = 10
-    health = 10
-    shoot_pressed: bool = False
-    shoot_direction: Vector2 = V_EAST
+    max_health = 20
+    health = max_health
+    shoot_pressed = False
+    shoot_direction: Vector2
     state = "MOVE"
     guide_width = 16
-    hurt_sound: mixer.Sound = mixer.Sound("assets/sounds/player_hurt.mp3")
+    hurt_sound: mixer.Sound = mixer.Sound("assets/sounds/player_hurt_0.mp3")
 
     @classmethod
     def get_instance(cls):
@@ -149,7 +177,7 @@ class Player:
         return cls._instance
 
     @staticmethod
-    def get_direction(keys):
+    def __get_direction(keys):
         x_strength = (int(keys[K_RIGHT]) + int(keys[K_d])) - (int(keys[K_LEFT]) + int(keys[K_a]))
         y_strength = (int(keys[K_DOWN]) + int(keys[K_s])) - (int(keys[K_UP] + int(keys[K_w])))
 
@@ -163,7 +191,7 @@ class Player:
 
     def move(self):
         keys = pg.key.get_pressed()
-        direction = self.get_direction(keys)
+        direction = self.__get_direction(keys)
         self.velocity = self.speed * direction
         self.rect = self.rect.move(self.velocity)
 
@@ -185,9 +213,23 @@ class Player:
         if not shoot_pressed:
             ecto = Ectoplasm(direction, self.rect.center)
             self.ectos.append(ecto)
+            ecto_shoot_sound.play()
             self.shoot_pressed = False
             self.num_ecto += 1
             self.state = "MOVE"
+
+    def __draw_guide(self):
+        start_point = Vector2(self.rect.center)
+        end_point = Vector2(CURSOR_RECT.center)
+        dx = end_point.x - start_point.x
+        dy = end_point.y - start_point.y
+
+        direction = Vector2(dx, dy)
+        if direction.length() != 0:
+            direction = direction.normalize()
+
+        end_point = (direction * Ectoplasm.max_range) + start_point
+        pg.draw.line(GAME_BACKGROUND, Color(255, 255, 255), start_point, end_point, self.guide_width)
 
     def update(self):
         match self.state:
@@ -207,19 +249,6 @@ class Player:
             if not ecto.is_collected:
                 uncollected_ectos.append(ecto)
             self.ectos = uncollected_ectos
-
-    def __draw_guide(self):
-        start_point = Vector2(self.rect.center)
-        end_point = Vector2(CURSOR_RECT.center)
-        dx = end_point.x - start_point.x
-        dy = end_point.y - start_point.y
-
-        direction = Vector2(dx, dy)
-        if direction.length() != 0:
-            direction = direction.normalize()
-
-        end_point = (direction * Ectoplasm.max_range) + start_point
-        pg.draw.line(GAME_BACKGROUND, "White", start_point, end_point, self.guide_width)
 
     def draw(self):
         for ecto in self.ectos:
@@ -295,7 +324,7 @@ class Enemy:
         ml = self.rect.midleft
         tl = self.rect.topleft
 
-        diag_length = 5
+        diag_length = 3
         straight_length = 7
 
         steer_rays = [
@@ -386,21 +415,25 @@ class Enemy:
 class Dasher(Enemy):
     dash_speed = 15
     base_speed = 2
-    dash_time = 200
+    max_dash_distance = 300
+    dash_distance = 0
+    dash_time = 250
     dash_timer = 0
     dash_direction: Vector2 = V_ZERO
+    dash_range = 275
+    delt_damage = False
 
     def __init__(self):
         w = 25
         h = 25
-        super().__init__(w, h, Surface((w, h)), 2, 1, 5, 2000, True,    300)
+        super().__init__(w, h, Surface((w, h)), 2, 2, 5, 2000, True, 400)
 
     def move(self):
         self.speed = self.base_speed
         super().move()
         self.last_attack += self.dt
 
-        if self.last_attack >= self.attack_rate and self.get_distance_to_player() <= 300:
+        if self.last_attack >= self.attack_rate and self.get_distance_to_player() <= self.dash_range:
             self.dash_direction = self.get_direction_to_player()
             self.state = "TELEGRAPH"
             self.last_attack = 0
@@ -408,11 +441,17 @@ class Dasher(Enemy):
     def attack(self):
         self.speed = self.dash_speed
         self.velocity = self.dash_direction * self.speed
-        super().move()
-        self.dash_timer += self.dt
 
-        if self.dash_timer >= self.dash_time:
-            self.dash_timer = 0
+        super().move()
+        self.dash_distance += self.velocity.magnitude()
+
+        if not self.delt_damage and self.rect.colliderect(self.player.rect):
+            self.delt_damage = True
+            self.player.health -= 1
+
+        if self.dash_distance >= self.max_dash_distance:
+            self.delt_damage = False
+            self.dash_distance = 0
             self.state = "MOVE"
 
 
@@ -598,29 +637,93 @@ class EnemyManager:
             p.draw()
 
 
+class Hazard:
+    player: Player = Player.get_instance()
+    rect: Rect
+    sprite: Surface
+    state: str = "ACTIVE"
+
+    def __init__(self, x, y, w, h):
+        self.rect = Rect(x, y, w, h)
+        self.sprite = Surface((w, h))
+        self.sprite.fill("darkviolet")
+
+    def active(self):
+        pass
+
+    def inactive(self):
+        pass
+
+    def update(self):
+        match self.state:
+            case "ACTIVE":
+                self.active()
+            case "INACTIVE":
+                self.inactive()
+
+    def draw(self):
+        GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
+
+
+class HazardManager:
+    _instance = None
+    grid_size = tuple([15, 31])
+    hazards: list[Hazard] = []
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls.__new__(cls)
+        return cls._instance
+
+    def load_hazards(self):
+        self.hazards = []
+        for row_ind in range(1, self.grid_size[0]):
+            for col_ind in range(1, self.grid_size[1]):
+                rand_num = random.randint(0, 64)
+                if rand_num == 64:
+                    self.hazards.append(Hazard(col_ind * 40, row_ind * 40, 40, 40))
+
+    def update(self):
+        pass
+
+    def draw(self):
+        for h in self.hazards:
+            h.draw()
+
+
 class Upgrade:
     player = Player.get_instance()
     cost: int
     rect: Rect
     card: Surface
     sold_card = image.load("assets/UI/sold_card.png").convert_alpha()
+    highlight = Surface((200, 200))
+    highlight_rect: Rect
+    highlight.fill("white")
     clicked = False
     bought = False
+    hovered = False
+    hover_offset = 10
 
-    def __init__(self, cost, card):
+    def __init__(self, cost: int, card: Surface):
         self.rect = Rect(0, 0, 200, 200)
+        self.highlight_rect = Rect(0, 0, 200, 200)
         self.card = card
         self.cost = cost
 
-    def set_position(self, position: tuple):
+    def set_shop_position(self, position: tuple):
         self.rect.x = position[0]
         self.rect.y = position[1]
+        self.highlight_rect.x = position[0]
+        self.highlight_rect.y = position[1]
 
     def apply_upgrade(self):
         pass
 
     def update(self):
-        if self.bought or not self.rect.collidepoint(mouse.get_pos()):
+        self.hovered = self.highlight_rect.collidepoint(mouse.get_pos())
+        if self.bought or not self.hovered:
             self.clicked = False
             return
 
@@ -638,6 +741,14 @@ class Upgrade:
             self.clicked = False
 
     def draw(self):
+        if self.hovered:
+            self.rect.x = self.highlight_rect.x + self.hover_offset
+            self.rect.y = self.highlight_rect.y - self.hover_offset
+            GAME_BACKGROUND.blit(self.highlight, (self.highlight_rect.x, self.highlight_rect.y))
+        else:
+            self.rect.x = self.highlight_rect.x
+            self.rect.y = self.highlight_rect.y
+
         if self.bought:
             GAME_BACKGROUND.blit(self.sold_card, (self.rect.x, self.rect.y))
         else:
@@ -651,6 +762,7 @@ class MaxHealthUpgrade(Upgrade):
 
     def apply_upgrade(self):
         self.player.max_health += 1
+        self.player.health += 1
 
 
 class NumEctoUpgrade(Upgrade):
@@ -677,6 +789,22 @@ class RestoreHealthUpgrade(Upgrade):
         self.player.health = self.player.max_health
 
 
+class PlayerSpeedUpgrade(Upgrade):
+    def __init__(self):
+        super().__init__(7, image.load("assets/UI/player_speed_upgrade_card.png").convert())
+
+    def apply_upgrade(self):
+        self.player.speed += 1
+
+
+class EctoDamageUpgrade(Upgrade):
+    def __init__(self):
+        super().__init__(5, image.load("assets/UI/ectoplasm_damage_upgrade_card.png").convert())
+
+    def apply_upgrade(self):
+        Ectoplasm.damage += 1
+
+
 class Shop:
     _instance = None
     rect: Rect
@@ -685,8 +813,11 @@ class Shop:
         MaxHealthUpgrade(),
         NumEctoUpgrade(),
         RestoreHealthUpgrade(),
-        EctoRangeUpgrade()
+        EctoRangeUpgrade(),
+        PlayerSpeedUpgrade(),
+        EctoDamageUpgrade()
     ]
+
     shop_upgrades: list[Upgrade] = []
     positions: list[tuple]
 
@@ -696,9 +827,11 @@ class Shop:
             cls._instance = cls.__new__(cls)
             cls.rect = Rect(200, 200, GAME_WIDTH, 200)
             cls.rect.center = GAME_RECT.center
-            cls.positions: list[tuple] = [tuple([cls.rect.midtop[0] - 400, cls.rect.midtop[1]]),
-                                          tuple([cls.rect.midtop[0] - 100, cls.rect.midtop[1]]),
-                                          tuple([cls.rect.midtop[0] + 200, cls.rect.midtop[1]])]
+            y_pos = cls.rect.y
+            centerx = GAME_RECT.centerx
+            cls.positions: list[tuple] = [tuple([centerx - 400, y_pos]),
+                                          tuple([centerx - 100, y_pos]),
+                                          tuple([centerx + 200, y_pos])]
         return cls._instance
 
     def get_rand_upgrade(self) -> Upgrade:
@@ -707,7 +840,7 @@ class Shop:
     def set_upgrades(self):
         for i in range(3):
             self.shop_upgrades.append(self.get_rand_upgrade())
-            self.shop_upgrades[i].set_position(self.positions[i])
+            self.shop_upgrades[i].set_shop_position(self.positions[i])
 
     def close(self):
         for upgrade in self.shop_upgrades:
@@ -724,32 +857,41 @@ class Shop:
             upgrade.draw()
 
 
-class UI:
-    game = None
-    width = 0
-    height = 0
-    surf: Surface = None
-    rect: Rect = None
-    player = None
+class GameUI:
+    font = pygame.font.Font("assets/UI/fonts/cambria-bold.ttf", 50)
+
+    # Load ectoplasm image
+    ectoplasm_image = pygame.image.load('assets/sprites/player/ectoplasm.png').convert_alpha()
+    ectoplasm_image = pygame.transform.scale(ectoplasm_image, (50, 50))
 
     def __init__(self):
         self.player = Player.get_instance()
-        self.width = WINDOW_WIDTH
-        self.height = 100
-        self.surf = Surface((self.width, self.height))
-        self.surf.fill("Red")
 
-    def update(self):
-        pass
+    def draw_health_bar(self, surface, x, y):
+        max_health = self.player.max_health
+        bar_width = 200
+        bar_height = 50
 
-    def draw(self):
-        pass
+        # Health bar background
+        pygame.draw.rect(surface, RED, (x, y, bar_width, bar_height))
+
+        # Health bar foreground (based on current health)
+        current_health_width = (self.player.health / max_health) * bar_width
+        pygame.draw.rect(surface, GREEN, (x, y, current_health_width, bar_height))
+
+    def draw_coin_counter(self, surface, x, y):
+        text = self.font.render(f"Coins: {self.player.num_coins}", True, WHITE)
+        surface.blit(text, (x, y))
+
+    def draw_ectoplasm(self, surface, x, y):
+        surface.blit(self.ectoplasm_image, (x, y))
 
 
 class Game:
     _instance = None
     player = None
     enemy_manager = None
+    hazard_manager = None
     shop = None
     RUNNING = True
     curr_wave = 1
@@ -757,6 +899,8 @@ class Game:
     clock = time.Clock()
     state = "HOME"
     prev_state = "WAVE"
+    game_ui: GameUI
+    info_screen = image.load("assets/UI/info_screen.png").convert()
 
     @classmethod
     def get_instance(cls):
@@ -768,8 +912,7 @@ class Game:
         # TODO IMPLEMENT PROPERLY
         self.curr_wave = 1
         self.enemy_manager.load_enemies(self.curr_wave)
-        self.player.rect.x = 0
-        self.player.rect.y = 0
+        self.player.rect.center = GAME_RECT.center
         self.state = "WAVE"
 
     def update(self):
@@ -788,7 +931,7 @@ class Game:
                 self.player.update()
                 self.enemy_manager.update(dt)
 
-                if self.player.health < 0:
+                if self.player.health <= 0:
                     self.state = "GAME_OVER"
 
                 if self.enemy_manager.wave_complete:
@@ -813,6 +956,7 @@ class Game:
                     self.shop.close()
                     self.curr_wave += 1
                     self.enemy_manager.load_enemies(self.curr_wave)
+                    self.hazard_manager.load_hazards()
                     self.state = "WAVE"
 
                 self.shop.update()
@@ -827,13 +971,12 @@ class Game:
                 if keys[K_e]:
                     self.RUNNING = False
 
-        # TODO Update the UI
-
     def draw(self):
         match self.state:
             case "WAVE":
                 SCREEN.blit(GAME_BACKGROUND, (0, 0))
                 GAME_BACKGROUND.fill("Black")
+                self.hazard_manager.draw()
                 self.player.draw()
                 self.enemy_manager.draw()
 
@@ -843,17 +986,14 @@ class Game:
                 self.shop.draw()
 
             case "INFO":
-                # TODO CREATE INFO SCREEN
-                SCREEN.blit(GAME_BACKGROUND, (0, 0))
-                GAME_BACKGROUND.fill("Cyan")
+                SCREEN.blit(self.info_screen, (0, 0))
 
             case "GAME_OVER":
-                # TODO CREATE GAME OVER SCREEN
-                # TODO Show Victory or Defeat Screen Based on Player Health
-                SCREEN.blit(GAME_BACKGROUND, (0, 0))
-                GAME_BACKGROUND.fill("Green")
+                if self.player.health > 0:
+                    SCREEN.blit(image.load("assets/UI/congratulations.png"), (0, 0))
+                else:
+                    SCREEN.blit(image.load("assets/UI/you_died.png"), (0, 0))
 
-        # TODO Draw the UI
         mouse_pos = mouse.get_pos()
         CURSOR_RECT.x = mouse_pos[0]
         CURSOR_RECT.y = mouse_pos[1]
@@ -865,6 +1005,9 @@ class Game:
         self.enemy_manager = EnemyManager.get_instance()
         self.shop = Shop().get_instance()
         self.enemy_manager.load_enemies(self.curr_wave)
+        self.game_ui = GameUI()
+        self.hazard_manager = HazardManager.get_instance()
+        self.hazard_manager.load_hazards()
 
         while self.RUNNING:
             for e in pg.event.get():
@@ -878,7 +1021,26 @@ class Game:
 
             self.update()
             self.draw()
-            self.clock.tick(60)
+
+            SCREEN.fill("darkslategrey")
+            # Draw the UI elements in a horizontal line
+            y_position = GAME_HEIGHT + 15  # Keep the same Y position for all elements
+
+            # Starting X positions for the elements
+            x_health_bar = 50
+            x_coin_counter = x_health_bar + 300  # Adjust spacing after health bar
+            x_ectoplasm = x_coin_counter + 300  # Adjust spacing after coin counter
+
+            # Draw the health bar
+            self.game_ui.draw_health_bar(SCREEN, x_health_bar, y_position)
+
+            # Draw the coin counter
+            self.game_ui.draw_coin_counter(SCREEN, x_coin_counter, y_position)
+
+            # Draw the ectoplasm image
+            self.game_ui.draw_ectoplasm(SCREEN, x_ectoplasm, y_position)
+
+            self.clock.tick(TICK_RATE)
 
 
 if __name__ == "__main__":
