@@ -21,12 +21,32 @@ GAME_WIDTH = WINDOW_WIDTH
 GAME_RECT = Rect(0, 0, GAME_WIDTH, GAME_HEIGHT)
 GAME_BACKGROUND: Surface = Surface((GAME_WIDTH, GAME_HEIGHT))
 
+# SOUNDS
 mixer.init()
 mixer.pre_init()
+mixer.music.load("assets/sounds/music_0.wav")
+mixer.music.play(-1)
+mixer.music.set_volume(0.33)
 atmosphere_sound = mixer.Sound("assets/sounds/horror_atmosphere_0.wav")
-atmosphere_sound.set_volume(0.35)
-ecto_shoot_sound = mixer.Sound("assets/sounds/ecto_shoot_0.wav")
+# atmosphere_sound.set_volume(0.75)
 atmosphere_sound.play(-1)
+ecto_collected_sound = mixer.Sound("assets/sounds/ecto_collected_1.wav")
+ecto_hit_sound = mixer.Sound("assets/sounds/ecto_hit.mp3")
+ecto_hit_sound.set_volume(0.33)
+card_hovered_sound = mixer.Sound("assets/sounds/shop/card_hover_0.wav")
+card_hovered_sound.set_volume(0.75)
+upgrade_bought_sound = mixer.Sound("assets/sounds/shop/upgrade_bought_1.wav")
+cant_buy_sound = mixer.Sound("assets/sounds/shop/upgrade_bought_0.wav")
+cant_buy_sound.set_volume(0.33)
+out_of_ecto_sound = mixer.Sound("assets/sounds/error.wav")
+out_of_ecto_sound.set_volume(0.50)
+shooter_shoot_sound = mixer.Sound("assets/sounds/shooter_shoot_3.wav")
+shooter_shoot_sound.set_volume(0.75)
+
+# CHANNELS
+shop_channel = mixer.Channel(0)
+collect_ecto_channel = mixer.Channel(1)
+shooter_channels = [mixer.Channel(i) for i in range(2, 4)]
 
 mouse.set_visible(False)
 CURSOR_RECT = Rect(0, 0, 32, 32)
@@ -37,7 +57,7 @@ TICK_RATE = 60
 WHITE = (255, 255, 255)
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
-
+BG_COLOR = "Black"
 V_ZERO = Vector2(0, 0)
 V_NORTH = Vector2(0, -1)
 V_NORTH_EAST = Vector2(1, -1)
@@ -47,6 +67,9 @@ V_SOUTH = Vector2(0, 1)
 V_SOUTH_WEST = Vector2(-1, 1)
 V_WEST = Vector2(-1, 0)
 V_NORTH_WEST = Vector2(-1, -1)
+
+# DEBUG
+GOD_MODE = True
 
 
 def create_line(x1, y1, x2, y2):
@@ -121,10 +144,12 @@ class Projectile:
 
 
 class Ectoplasm(Projectile):
-    is_collected = False
+    collected = False
     distance_traveled = 0
     max_range = 250
     damage = 5
+    ecto_shoot_sound = mixer.Sound("assets/sounds/ecto_shoot_1.wav")
+    ecto_shoot_sound.set_volume(0.5)
 
     def __init__(self, direction, center):
         rect = Rect(0, 0, 16, 16)
@@ -136,8 +161,11 @@ class Ectoplasm(Projectile):
                          5,
                          True)
         self.damage = 5
+        self.ecto_shoot_sound.play()
 
     def handle_hit(self):
+        self.ecto_shoot_sound.stop()
+        ecto_hit_sound.play()
         self.is_active = False
 
     def update(self):
@@ -155,7 +183,7 @@ class Player:
     velocity = Vector2(0, 0)
     ectos: list[Ectoplasm] = []
     speed = 5
-    num_coins = 15
+    num_coins = 4
     num_ecto = 0
     max_num_ecto = 5
     phase_speed_modifier = 1.5
@@ -166,7 +194,7 @@ class Player:
     shoot_direction: Vector2
     state = "MOVE"
     guide_width = 16
-    hurt_sound: mixer.Sound = mixer.Sound("assets/sounds/player_hurt_0.mp3")
+    out_of_ecto = False
 
     @classmethod
     def get_instance(cls):
@@ -187,6 +215,8 @@ class Player:
         return direction
 
     def take_damage(self, damage: int):
+        if GOD_MODE:
+            return
         self.health -= damage
 
     def move(self):
@@ -198,11 +228,22 @@ class Player:
         check_wall_collision(self.rect)
 
         shoot_pressed = mouse.get_pressed()[0]
-        if shoot_pressed and self.num_ecto < self.max_num_ecto:
+        if shoot_pressed:
+            if self.num_ecto >= self.max_num_ecto:
+                self.out_of_ecto = True
+                out_of_ecto_sound.play()
+            else:
+                self.out_of_ecto = False
             self.state = "SHOOT"
 
     def shoot(self):
         shoot_pressed = mouse.get_pressed()[0]
+
+        if self.out_of_ecto:
+            if not shoot_pressed:
+                self.state = "MOVE"
+            return
+
         dx = CURSOR_RECT.centerx - self.rect.centerx
         dy = CURSOR_RECT.centery - self.rect.centery
 
@@ -213,7 +254,6 @@ class Player:
         if not shoot_pressed:
             ecto = Ectoplasm(direction, self.rect.center)
             self.ectos.append(ecto)
-            ecto_shoot_sound.play()
             self.shoot_pressed = False
             self.num_ecto += 1
             self.state = "MOVE"
@@ -241,12 +281,14 @@ class Player:
         uncollected_ectos = []
         for ecto in self.ectos:
             if ecto.rect.colliderect(self.rect) and not ecto.is_active:
-                ecto.is_collected = True
+                ecto.collected = True
+                if not collect_ecto_channel.get_busy():
+                    collect_ecto_channel.play(ecto_collected_sound)
                 self.num_ecto -= 1
 
             ecto.update()
 
-            if not ecto.is_collected:
+            if not ecto.collected:
                 uncollected_ectos.append(ecto)
             self.ectos = uncollected_ectos
 
@@ -254,7 +296,7 @@ class Player:
         for ecto in self.ectos:
             ecto.draw()
 
-        if self.state == "SHOOT":
+        if self.state == "SHOOT" and not self.out_of_ecto:
             self.__draw_guide()
         GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
 
@@ -393,6 +435,9 @@ class Enemy:
             self.sprite.fill("Green")
             self.state = "ATTACK"
 
+    def idle(self):
+        pass
+
     def update(self, dt):
         self.dt = dt
         match self.state:
@@ -402,6 +447,8 @@ class Enemy:
                 self.attack()
             case "TELEGRAPH":
                 self.telegraph()
+            case "IDLE":
+                self.idle()
 
         for e in self.player.ectos:
             if e.rect.colliderect(self.rect) and e.is_active:
@@ -426,7 +473,8 @@ class Dasher(Enemy):
     def __init__(self):
         w = 25
         h = 25
-        super().__init__(w, h, Surface((w, h)), 2, 2, 5, 2000, True, 400)
+        super().__init__(w, h, Surface((w, h)), 2, 2, 5, 2000, True,
+                         400)
 
     def move(self):
         self.speed = self.base_speed
@@ -447,7 +495,7 @@ class Dasher(Enemy):
 
         if not self.delt_damage and self.rect.colliderect(self.player.rect):
             self.delt_damage = True
-            self.player.health -= 1
+            self.player.take_damage(1)
 
         if self.dash_distance >= self.max_dash_distance:
             self.delt_damage = False
@@ -483,11 +531,16 @@ class EnemyProjectile(Projectile):
 
 class Shooter(Enemy):
     projectiles: list[EnemyProjectile] = []
+    curr_shooter_channel = 0
+    idle_timer = 0
+    idle_time = 0
+    idle_chance = 10
 
     def __init__(self):
         w = 25
         h = 25
-        super().__init__(w, h, Surface((w, h)), 2, 3, 5, 2500, True, 0)
+        super().__init__(w, h, Surface((w, h)), 2, 3, 5, 4000, True,
+                         0)
         self.sprite.fill("Red")
 
     def move(self):
@@ -503,7 +556,30 @@ class Shooter(Enemy):
 
     def attack(self):
         self.projectiles.append(EnemyProjectile(self.rect.center, self.get_direction_to_player()))
+
+        channel = shooter_channels[self.curr_shooter_channel]
+        if not channel.get_busy():
+            channel.play(shooter_shoot_sound)
+
+        Shooter.curr_shooter_channel += 1
+        if Shooter.curr_shooter_channel >= len(shooter_channels):
+            Shooter.curr_shooter_channel = 0
+
+        idle_num = random.randint(1, 10)
+        if idle_num == self.idle_chance:
+            self.idle_timer = random.randint(1000, 3000)
+            self.sprite.fill("coral")
+            self.state = "IDLE"
+
+            return
         self.state = "MOVE"
+
+    def idle(self):
+        self.idle_time += self.dt
+        if self.idle_time >= self.idle_timer:
+            self.idle_time = 0
+            self.sprite.fill("red")
+            self.state = "MOVE"
 
     def update(self, dt):
         super().update(dt)
@@ -642,11 +718,15 @@ class Hazard:
     rect: Rect
     sprite: Surface
     state: str = "ACTIVE"
+    active_timer = 0
+    active_time = 0
+    inactive_timer = 0
+    inactive_time = 0
+    dt = 0
 
-    def __init__(self, x, y, w, h):
-        self.rect = Rect(x, y, w, h)
-        self.sprite = Surface((w, h))
-        self.sprite.fill("darkviolet")
+    def __init__(self, x, y, sprite: Surface):
+        self.rect = Rect(x, y, 40, 40)
+        self.sprite = sprite
 
     def active(self):
         pass
@@ -654,7 +734,8 @@ class Hazard:
     def inactive(self):
         pass
 
-    def update(self):
+    def update(self, dt):
+        self.dt = dt
         match self.state:
             case "ACTIVE":
                 self.active()
@@ -663,6 +744,40 @@ class Hazard:
 
     def draw(self):
         GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
+
+
+class Spike(Hazard):
+    active_sprite = image.load("assets/sprites/hazards/spikes.png")
+    inactive_sprite = image.load("assets/sprites/hazards/inactive_spikes.png")
+
+    def __init__(self, x, y):
+        super().__init__(x, y, self.active_sprite)
+        self.active_timer = random.randint(5000, 10000)
+        self.inactive_timer = random.randint(2500, 6000)
+
+    def active(self):
+        if self.rect.colliderect(self.player.rect):
+            self.player.take_damage(-1)
+            self.state = "INACTIVE"
+        self.active_time += self.dt
+
+        if self.active_time >= self.active_timer:
+            self.active_time = 0
+            self.sprite = self.inactive_sprite
+            self.state = "INACTIVE"
+
+    def inactive(self):
+        self.inactive_time += self.dt
+
+        if self.inactive_time >= self.inactive_timer:
+            self.sprite = self.active_sprite
+            self.inactive_time = 0
+            self.state = "ACTIVE"
+
+
+
+
+
 
 
 class HazardManager:
@@ -682,10 +797,11 @@ class HazardManager:
             for col_ind in range(1, self.grid_size[1]):
                 rand_num = random.randint(0, 64)
                 if rand_num == 64:
-                    self.hazards.append(Hazard(col_ind * 40, row_ind * 40, 40, 40))
+                    self.hazards.append(Spike(col_ind * 40, row_ind * 40))
 
-    def update(self):
-        pass
+    def update(self, dt):
+        for h in self.hazards:
+            h.update(dt)
 
     def draw(self):
         for h in self.hazards:
@@ -704,7 +820,9 @@ class Upgrade:
     clicked = False
     bought = False
     hovered = False
+    hover_sound_played = False
     hover_offset = 10
+    cant_buy_sound_played = False
 
     def __init__(self, cost: int, card: Surface):
         self.rect = Rect(0, 0, 200, 200)
@@ -722,22 +840,37 @@ class Upgrade:
         pass
 
     def update(self):
+        pressed = mouse.get_pressed()[0]
         self.hovered = self.highlight_rect.collidepoint(mouse.get_pos())
-        if self.bought or not self.hovered:
+
+        if self.hovered:
+            if not self.hover_sound_played:
+                card_hovered_sound.play()
+                self.hover_sound_played = True
+        else:
+            self.hover_sound_played = False
             self.clicked = False
             return
-
-        pressed = mouse.get_pressed()[0]
 
         if pressed:
             self.clicked = True
             time.wait(120)
 
         if self.clicked and not pressed:
+            if self.bought:
+                card_hovered_sound.stop()
+                cant_buy_sound.play()
+                self.clicked = False
+                return
+
             if self.player.num_coins >= self.cost:
                 self.player.num_coins -= self.cost
                 self.bought = True
                 self.apply_upgrade()
+                card_hovered_sound.stop()
+                upgrade_bought_sound.play()
+            else:
+                cant_buy_sound.play()
             self.clicked = False
 
     def draw(self):
@@ -808,6 +941,11 @@ class EctoDamageUpgrade(Upgrade):
 class Shop:
     _instance = None
     rect: Rect
+    shop_font = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", 24)
+    continue_text = shop_font.render("Press [SPACE] to Continue", True, WHITE)
+    continue_text_rect = continue_text.get_rect()
+    continue_text_rect.centerx = GAME_RECT.centerx
+    continue_text_rect.bottom = GAME_HEIGHT - 20
 
     all_upgrades: list[Upgrade] = [
         MaxHealthUpgrade(),
@@ -856,6 +994,8 @@ class Shop:
         for upgrade in self.shop_upgrades:
             upgrade.draw()
 
+        SCREEN.blit(self.continue_text, self.continue_text_rect)
+
 
 class GameUI:
     font = pygame.font.Font("assets/UI/fonts/cambria-bold.ttf", 50)
@@ -884,7 +1024,14 @@ class GameUI:
         surface.blit(text, (x, y))
 
     def draw_ectoplasm(self, surface, x, y):
+        text = self.font.render(
+            f"{self.player.max_num_ecto - self.player.num_ecto} / {self.player.max_num_ecto}", True, WHITE
+        )
+        text_rect = text.get_rect()
+        text_rect.x = x + self.ectoplasm_image.get_width() + 20
+        text_rect.y = y
         surface.blit(self.ectoplasm_image, (x, y))
+        surface.blit(text, text_rect)
 
 
 class Game:
@@ -930,6 +1077,7 @@ class Game:
 
                 self.player.update()
                 self.enemy_manager.update(dt)
+                self.hazard_manager.update(dt)
 
                 if self.player.health <= 0:
                     self.state = "GAME_OVER"
@@ -975,14 +1123,14 @@ class Game:
         match self.state:
             case "WAVE":
                 SCREEN.blit(GAME_BACKGROUND, (0, 0))
-                GAME_BACKGROUND.fill("Black")
+                GAME_BACKGROUND.fill(BG_COLOR)
                 self.hazard_manager.draw()
                 self.player.draw()
                 self.enemy_manager.draw()
 
             case "SHOP":
                 SCREEN.blit(GAME_BACKGROUND, (0, 0))
-                GAME_BACKGROUND.fill("Black")
+                GAME_BACKGROUND.fill(BG_COLOR)
                 self.shop.draw()
 
             case "INFO":
