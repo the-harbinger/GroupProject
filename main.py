@@ -32,9 +32,9 @@ atmosphere_sound = mixer.Sound("assets/sounds/horror_atmosphere_0.wav")
 atmosphere_sound.play(-1)
 ecto_collected_sound = mixer.Sound("assets/sounds/ecto_collected_1.wav")
 ecto_hit_sound = mixer.Sound("assets/sounds/ecto_hit.mp3")
-ecto_hit_sound.set_volume(0.33)
+ecto_hit_sound.set_volume(0.50)
 card_hovered_sound = mixer.Sound("assets/sounds/shop/card_hover_0.wav")
-card_hovered_sound.set_volume(0.75)
+# card_hovered_sound.set_volume(0.75)
 upgrade_bought_sound = mixer.Sound("assets/sounds/shop/upgrade_bought_1.wav")
 cant_buy_sound = mixer.Sound("assets/sounds/shop/upgrade_bought_0.wav")
 cant_buy_sound.set_volume(0.33)
@@ -42,6 +42,9 @@ out_of_ecto_sound = mixer.Sound("assets/sounds/error.wav")
 out_of_ecto_sound.set_volume(0.50)
 shooter_shoot_sound = mixer.Sound("assets/sounds/shooter_shoot_3.wav")
 shooter_shoot_sound.set_volume(0.75)
+spike_activate_sound = mixer.Sound("assets/sounds/spike_activate.wav")
+spike_deactivate_sound = mixer.Sound("assets/sounds/spike_deactivate.wav")
+spike_deactivate_sound.set_volume(0.25)
 
 # CHANNELS
 shop_channel = mixer.Channel(0)
@@ -58,6 +61,7 @@ WHITE = (255, 255, 255)
 RED = (255, 0, 0)
 GREEN = (0, 255, 0)
 BG_COLOR = "Black"
+
 V_ZERO = Vector2(0, 0)
 V_NORTH = Vector2(0, -1)
 V_NORTH_EAST = Vector2(1, -1)
@@ -183,7 +187,7 @@ class Player:
     velocity = Vector2(0, 0)
     ectos: list[Ectoplasm] = []
     speed = 5
-    num_coins = 4
+    num_coins = 400
     num_ecto = 0
     max_num_ecto = 5
     phase_speed_modifier = 1.5
@@ -757,13 +761,15 @@ class Spike(Hazard):
 
     def active(self):
         if self.rect.colliderect(self.player.rect):
-            self.player.take_damage(-1)
+            self.player.take_damage(1)
+            spike_deactivate_sound.play()
             self.state = "INACTIVE"
         self.active_time += self.dt
 
         if self.active_time >= self.active_timer:
             self.active_time = 0
             self.sprite = self.inactive_sprite
+            spike_deactivate_sound.play()
             self.state = "INACTIVE"
 
     def inactive(self):
@@ -772,12 +778,8 @@ class Spike(Hazard):
         if self.inactive_time >= self.inactive_timer:
             self.sprite = self.active_sprite
             self.inactive_time = 0
+            spike_activate_sound.play()
             self.state = "ACTIVE"
-
-
-
-
-
 
 
 class HazardManager:
@@ -796,7 +798,10 @@ class HazardManager:
         for row_ind in range(1, self.grid_size[0]):
             for col_ind in range(1, self.grid_size[1]):
                 rand_num = random.randint(0, 64)
+                # SPAWN
                 if rand_num == 64:
+                    # random.randint()
+
                     self.hazards.append(Spike(col_ind * 40, row_ind * 40))
 
     def update(self, dt):
@@ -999,6 +1004,8 @@ class Shop:
 
 class GameUI:
     font = pygame.font.Font("assets/UI/fonts/cambria-bold.ttf", 50)
+    timer = 0
+    timer_active = False
 
     # Load ectoplasm image
     ectoplasm_image = pygame.image.load('assets/sprites/player/ectoplasm.png').convert_alpha()
@@ -1033,6 +1040,28 @@ class GameUI:
         surface.blit(self.ectoplasm_image, (x, y))
         surface.blit(text, text_rect)
 
+    def draw_timer(self, dt, y):
+        if not self.timer_active:
+            return
+
+        self.timer += dt
+        hours = self.timer // 3600000
+        hours_milli = hours * 360000
+        minutes = (self.timer - hours_milli) // 60000
+        minutes_milli = minutes * 60000
+        seconds = (self.timer - hours_milli - minutes_milli) // 1000
+
+        sec_text = str(seconds) if seconds >= 10 else "0" + str(seconds)
+        min_text = str(minutes) if minutes >= 10 else "0" + str(minutes)
+        hour_text = str(hours) if hours >= 10 else "0" + str(hours)
+
+        text = self.font.render(f"{hour_text}:{min_text}:{sec_text}", True, "White")
+        text_rect = text.get_rect()
+        text_rect.x = GAME_RECT.right - text_rect.w - 20
+        text_rect.y = y
+
+        SCREEN.blit(text, text_rect)
+
 
 class Game:
     _instance = None
@@ -1048,6 +1077,7 @@ class Game:
     prev_state = "WAVE"
     game_ui: GameUI
     info_screen = image.load("assets/UI/info_screen.png").convert()
+    dt = 0
 
     @classmethod
     def get_instance(cls):
@@ -1063,7 +1093,7 @@ class Game:
         self.state = "WAVE"
 
     def update(self):
-        dt = self.clock.get_time()
+        self.dt = self.clock.get_time()
         keys = pg.key.get_pressed()
 
         match self.state:
@@ -1074,10 +1104,10 @@ class Game:
                 if keys[K_i]:
                     self.state = "INFO"
                     self.prev_state = "WAVE"
-
+                self.game_ui.timer_active = True
                 self.player.update()
-                self.enemy_manager.update(dt)
-                self.hazard_manager.update(dt)
+                self.enemy_manager.update(self.dt)
+                self.hazard_manager.update(self.dt)
 
                 if self.player.health <= 0:
                     self.state = "GAME_OVER"
@@ -1110,6 +1140,7 @@ class Game:
                 self.shop.update()
 
             case "INFO":
+                self.game_ui.timer_active = False
                 if keys[K_e]:
                     self.state = self.prev_state
 
@@ -1187,6 +1218,8 @@ class Game:
 
             # Draw the ectoplasm image
             self.game_ui.draw_ectoplasm(SCREEN, x_ectoplasm, y_position)
+
+            self.game_ui.draw_timer(self.dt, y_position)
 
             self.clock.tick(TICK_RATE)
 
