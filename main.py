@@ -73,7 +73,7 @@ V_WEST = Vector2(-1, 0)
 V_NORTH_WEST = Vector2(-1, -1)
 
 # DEBUG
-DEBUG_INVINCIBLE = False
+DEBUG_INVINCIBLE = True
 CUSTOM_SHOP_DEBUG = False
 
 
@@ -129,7 +129,7 @@ def generate_lined_text(text, max_length, text_font):
                 curr = ""
             j = i + 1
             forced_line = ""
-            while text[j] != "~" and j < text_length:
+            while j < text_length and text[j] != "~":
                 forced_line += text[j]
                 j += 1
 
@@ -314,7 +314,7 @@ class Player:
     _instance = None
     rect = Rect(600, 400, 32, 32)
     sprite = image.load("assets/sprites/player/ghost_player.png").convert_alpha()
-    velocity = Vector2(0, 0)
+    velocity = V_ZERO
     ectos: list[Ectoplasm] = []
     speed = 5
     num_coins = 400
@@ -375,8 +375,8 @@ class Player:
                 self.ectos.append(ecto)
             self.state = "MOVE"
 
-    def update(self, dt):
-        self.dt = dt
+    def update(self, _dt):
+        self.dt = _dt
         match self.state:
             case "MOVE":
                 self.move()
@@ -544,8 +544,8 @@ class Enemy:
     def idle(self):
         pass
 
-    def update(self, dt):
-        self.dt = dt
+    def update(self, _dt):
+        self.dt = _dt
         match self.state:
             case "MOVE":
                 self.move()
@@ -556,10 +556,10 @@ class Enemy:
             case "IDLE":
                 self.idle()
 
-        for e in self.player.ectos:
-            if e.rect.colliderect(self.rect) and e.is_active:
-                e.handle_hit()
-                self.take_damage(e.damage)
+        for ecto in self.player.ectos:
+            if ecto.rect.colliderect(self.rect) and ecto.is_active:
+                ecto.handle_hit()
+                self.take_damage(ecto.damage)
 
     def draw(self):
         GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
@@ -687,8 +687,8 @@ class Shooter(Enemy):
             self.sprite.fill("red")
             self.state = "MOVE"
 
-    def update(self, dt):
-        super().update(dt)
+    def update(self, _dt):
+        super().update(_dt)
 
         projectiles_to_keep = []
         for s in self.projectiles:
@@ -775,21 +775,21 @@ class EnemyManager:
         self.wave_complete = False
 
         while self.difficulty > 0:
-            e = EnemyFactory.create_enemy()
-            self.unspawned_enemies.append(e)
-            self.difficulty -= e.difficulty
+            enemy = EnemyFactory.create_enemy()
+            self.unspawned_enemies.append(enemy)
+            self.difficulty -= enemy.difficulty
 
-    def update(self, dt: int):
+    def update(self, _dt: int):
         enemies_to_keep: list[Enemy] = []
         for i in range(len(self.spawned_enemies)):
-            e = self.spawned_enemies[i]
-            e.steer(self.spawned_enemies, i)
-            e.update(dt)
+            enemy = self.spawned_enemies[i]
+            enemy.steer(self.spawned_enemies, i)
+            enemy.update(_dt)
 
-            if e.health > 0:
-                enemies_to_keep.append(e)
-            elif e.__class__ == Shooter:
-                self.dead_projectiles = self.dead_projectiles + e.projectiles
+            if enemy.health > 0:
+                enemies_to_keep.append(enemy)
+            elif enemy.__class__ == Shooter:
+                self.dead_projectiles = self.dead_projectiles + enemy.projectiles
 
         keep_projectiles = []
         for p in self.dead_projectiles:
@@ -799,7 +799,7 @@ class EnemyManager:
 
         self.dead_projectiles = keep_projectiles
         self.spawned_enemies = enemies_to_keep
-        self.last_spawn += dt
+        self.last_spawn += _dt
 
         len_unspawned = len(self.unspawned_enemies)
         len_spawned = len(self.spawned_enemies)
@@ -812,8 +812,8 @@ class EnemyManager:
             self.wave_complete = True
 
     def draw(self):
-        for e in self.spawned_enemies:
-            e.draw()
+        for enemy in self.spawned_enemies:
+            enemy.draw()
 
         for p in self.dead_projectiles:
             p.draw()
@@ -840,8 +840,8 @@ class Hazard:
     def inactive(self):
         pass
 
-    def update(self, dt):
-        self.dt = dt
+    def update(self, _dt):
+        self.dt = _dt
         match self.state:
             case "ACTIVE":
                 self.active()
@@ -898,15 +898,21 @@ class HazardManager:
 
     def load_hazards(self):
         self.hazards = []
+        half_row = self.grid_size[0] // 2
+        half_col = self.grid_size[1] // 2
         for row_ind in range(1, self.grid_size[0]):
             for col_ind in range(1, self.grid_size[1]):
-                rand_num = random.randint(0, 64)
+                if ((row_ind == half_row or row_ind == half_row + 1) and
+                        (col_ind == half_col or col_ind == half_col + 1)):
+                    continue
+                rand_num = random.randint(1, 64)
                 if rand_num == 64:
-                    self.hazards.append(Spike(col_ind * 40, row_ind * 40))
+                    hazard = Spike(col_ind * 40, row_ind * 40)
+                    self.hazards.append(hazard)
 
-    def update(self, dt):
+    def update(self, _dt):
         for h in self.hazards:
-            h.update(dt)
+            h.update(_dt)
 
     def draw(self):
         for h in self.hazards:
@@ -918,8 +924,8 @@ class Upgrade:
     cost: int
     rect: Rect
     card: Surface
-    sold_card = image.load("assets/UI/sold_card.png").convert_alpha()
-    info_card = image.load("assets/UI/empty_card.png")
+    sold_card = image.load("assets/shop/sold_card.png").convert_alpha()
+    info_card = image.load("assets/shop/empty_card.png")
     curr_card: Surface
     highlight = Surface((200, 200))
     highlight_rect: Rect
@@ -1016,7 +1022,7 @@ class MaxHealthUpgrade(Upgrade):
 
     def __init__(self):
         info_text = f"Increase your maximum health by  1 ~ ~ ~MAXIMUM HEALTH:~ ~{self.player.max_health} -> {self.player.max_health + 1}~"
-        super().__init__(5, image.load("assets/UI/max_health_upgrade_card.png").convert(), info_text)
+        super().__init__(5, image.load("assets/shop/max_health_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         self.player.max_health += 1
@@ -1027,7 +1033,7 @@ class MaxHealthUpgrade(Upgrade):
 class NumEctoUpgrade(Upgrade):
     def __init__(self):
         info_text = f"Increase how many Ectoplasm you can shoot before you run out ~ ~ ~ECTOPLASM:~ ~{self.player.ecto_shooter.max_num_ecto} -> {self.player.ecto_shooter.max_num_ecto + 1}~"
-        super().__init__(5, image.load("assets/UI/num_ectoplasm_upgrade_card.png").convert(), info_text)
+        super().__init__(5, image.load("assets/shop/num_ectoplasm_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         self.player.ecto_shooter.max_num_ecto += 1
@@ -1037,7 +1043,7 @@ class NumEctoUpgrade(Upgrade):
 class EctoRangeUpgrade(Upgrade):
     def __init__(self):
         info_text = f"Increase how far you Ectoplasm travels by 10 percent ~ ~ ~ECTOPLASM RANGE:~ ~{Ectoplasm.max_range} -> {Ectoplasm.max_range * 1.1}~"
-        super().__init__(5, image.load("assets/UI/ectoplasm_range_upgrade_card.png").convert(), info_text)
+        super().__init__(5, image.load("assets/shop/ectoplasm_range_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         Ectoplasm.max_range *= 1.1
@@ -1047,7 +1053,7 @@ class EctoRangeUpgrade(Upgrade):
 class RestoreHealthUpgrade(Upgrade):
     def __init__(self):
         info_text = f"Restore your health to your maximum health ~ ~ ~HEALTH:~ ~{self.player.health} -> {self.player.max_health}~"
-        super().__init__(10, image.load("assets/UI/restore_health_upgrade_card.png").convert(), info_text)
+        super().__init__(10, image.load("assets/shop/restore_health_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         self.player.health = self.player.max_health
@@ -1056,18 +1062,18 @@ class RestoreHealthUpgrade(Upgrade):
 
 class PlayerSpeedUpgrade(Upgrade):
     def __init__(self):
-        info_text = f"Increase your player speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} --> {self.player.speed + 1}~"
-        super().__init__(7, image.load("assets/UI/player_speed_upgrade_card.png").convert(), info_text)
+        info_text = f"Increase your movement speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} -> {self.player.speed + 1}~"
+        super().__init__(7, image.load("assets/shop/player_speed_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         self.player.speed += 1
-        self.update_info_text(f"Increase your player speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} -> {self.player.speed + 1}~")
+        self.update_info_text(f"Increase your movement speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} -> {self.player.speed + 1}~")
 
 
 class EctoDamageUpgrade(Upgrade):
     def __init__(self):
         info_text = f"Increase the damage delt by Ectoplasm by 1 ~ ~ ~ECTOPLASM DAMAGE:~ ~{Ectoplasm.damage} -> {Ectoplasm.damage + 1}~"
-        super().__init__(5, image.load("assets/UI/ectoplasm_damage_upgrade_card.png").convert(), info_text)
+        super().__init__(5, image.load("assets/shop/ectoplasm_damage_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         Ectoplasm.damage += 1
@@ -1076,12 +1082,12 @@ class EctoDamageUpgrade(Upgrade):
 
 class ControlRangeUpgrade(Upgrade):
     def __init__(self):
-        info_text = "Control the distance of how far you Ectoplasm can shoot by holding down the mouse button before you shoot"
-        super().__init__(20, image.load("assets/UI/empty_card.png").convert(), info_text)
+        info_text = "Control the distance of how far your Ectoplasm travels by holding down the mouse button before you shoot"
+        super().__init__(20, image.load("assets/shop/empty_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         self.player.ecto_shooter = ControlledRangeEctoShooter()
-        self.update_info_text("Control the distance of how far you Ectoplasm can shoot by holding down the mouse button before you shoot")
+        self.update_info_text("Control the distance of how far your Ectoplasm travels by holding down the mouse button before you shoot")
 
 
 class Shop:
@@ -1123,6 +1129,16 @@ class Shop:
         return self.all_upgrades.pop(random.randint(0, len(self.all_upgrades) - 1))
 
     def set_upgrades(self):
+        if CUSTOM_SHOP_DEBUG:
+            self.shop_upgrades = [
+                self.all_upgrades[0],
+                self.all_upgrades[1],
+                self.all_upgrades[2]
+            ]
+            for i in range(3):
+                self.shop_upgrades[i].set_shop_position(self.positions[i])
+            return
+
         for i in range(3):
             self.shop_upgrades.append(self.get_rand_upgrade())
             self.shop_upgrades[i].set_shop_position(self.positions[i])
@@ -1186,11 +1202,11 @@ class GameUI:
         surface.blit(self.ectoplasm_image, (x, y))
         surface.blit(text, text_rect)
 
-    def draw_timer(self, dt, y):
+    def draw_timer(self, _dt, y):
         if not self.timer_active:
             return
 
-        self.timer += dt
+        self.timer += _dt
         hours = self.timer // 3600000
         hours_milli = hours * 360000
         mins = (self.timer - hours_milli) // 60000
@@ -1208,8 +1224,8 @@ class GameUI:
 
         SCREEN.blit(text, text_rect)
 
-    def update(self, dt):
-        self.dt = dt
+    def update(self, _dt):
+        self.dt = _dt
 
     def draw(self):
         SCREEN.fill("darkslategrey")
@@ -1337,28 +1353,28 @@ class Game:
         pass
 
     def draw_wave(self):
-        SCREEN.blit(GAME_BACKGROUND, (0, 0))
+        SCREEN.blit(GAME_BACKGROUND, V_ZERO)
         GAME_BACKGROUND.fill(BG_COLOR)
         self.hazard_manager.draw()
         self.player.draw()
         self.enemy_manager.draw()
 
     def draw_shop(self):
-        SCREEN.blit(GAME_BACKGROUND, (0, 0))
+        SCREEN.blit(GAME_BACKGROUND, V_ZERO)
         GAME_BACKGROUND.fill(BG_COLOR)
         self.shop.draw()
 
     def draw_info(self):
-        SCREEN.blit(self.info_screen, (0, 0))
+        SCREEN.blit(self.info_screen, V_ZERO)
 
     def draw_game_over(self):
         if self.player.health > 0:
-            SCREEN.blit(image.load("assets/UI/congratulations.png"), (0, 0))
+            SCREEN.blit(image.load("assets/UI/congratulations.png"), V_ZERO)
         else:
-            SCREEN.blit(image.load("assets/UI/you_died.png"), (0, 0))
+            SCREEN.blit(image.load("assets/UI/you_died.png"), V_ZERO)
 
-    def update(self, dt):
-        self.dt = dt
+    def update(self, _dt):
+        self.dt = _dt
         match self.state:
             case "HOME":
                 self.update_home()
