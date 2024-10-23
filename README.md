@@ -1,6 +1,6 @@
 Group Project for CSE 1321 Lecture
 
-V 0.002
+V 0.01
 
 Core Gameplay is Finished
 
