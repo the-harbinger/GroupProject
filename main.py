@@ -26,7 +26,7 @@ mixer.init()
 mixer.pre_init()
 mixer.music.load("assets/sounds/music_0.wav")
 mixer.music.play(-1)
-mixer.music.set_volume(0.33)
+mixer.music.set_volume(0.1)
 atmosphere_sound = mixer.Sound("assets/sounds/horror_atmosphere_0.wav")
 # atmosphere_sound.set_volume(0.75)
 atmosphere_sound.play(-1)
@@ -44,7 +44,7 @@ shooter_shoot_sound = mixer.Sound("assets/sounds/shooter_shoot_3.wav")
 shooter_shoot_sound.set_volume(0.75)
 spike_activate_sound = mixer.Sound("assets/sounds/spike_activate.wav")
 spike_deactivate_sound = mixer.Sound("assets/sounds/spike_deactivate.wav")
-spike_deactivate_sound.set_volume(0.25)
+spike_deactivate_sound.set_volume(0.1)
 
 # CHANNELS
 shop_channel = mixer.Channel(0)
@@ -58,8 +58,8 @@ CURSOR = image.load("assets/sprites/player/cursor.png").convert_alpha()
 TICK_RATE = 60
 
 WHITE = (255, 255, 255)
-RED = (255, 0, 0)
-GREEN = (0, 255, 0)
+HEALTHBAR_LOWER_COLOR = (124, 60, 92)
+HEALTHBAR_HIGHER_COLOR = (0, 172, 252)
 BG_COLOR = "Black"
 
 V_ZERO = Vector2(0, 0)
@@ -73,7 +73,8 @@ V_WEST = Vector2(-1, 0)
 V_NORTH_WEST = Vector2(-1, -1)
 
 # DEBUG
-GOD_MODE = True
+DEBUG_INVINCIBLE = False
+CUSTOM_SHOP_DEBUG = False
 
 
 def create_line(x1, y1, x2, y2):
@@ -113,6 +114,44 @@ def generate_empty_grid(num_rows: int, num_cols: int) -> list[list]:
         grid.append(row)
 
     return grid
+
+
+def generate_lined_text(text, max_length, text_font):
+    lined_text = []
+    start = 0
+    curr = ""
+    i = 0
+    text_length = len(text)
+    while i < text_length:
+        if text[i] == "~":
+            if curr != "":
+                lined_text.append(text_font.render(curr, True, WHITE))
+                curr = ""
+            j = i + 1
+            forced_line = ""
+            while text[j] != "~" and j < text_length:
+                forced_line += text[j]
+                j += 1
+
+            lined_text.append(text_font.render(forced_line, True, WHITE))
+            start = j + 1
+            i = start
+            continue
+
+        elif text[i] == " " or i == text_length - 1:
+            if i == text_length - 1:
+                i += 1
+            word = text[start:i]
+            test_text = text_font.render(curr + word, True, WHITE)
+            if test_text.get_width() < max_length:
+                curr = curr + word + " "
+            else:
+                lined_text.append(text_font.render(curr, True, WHITE))
+                curr = word + " "
+            start = i + 1
+        i += 1
+
+    return lined_text
 
 
 class Projectile:
@@ -155,9 +194,10 @@ class Ectoplasm(Projectile):
     ecto_shoot_sound = mixer.Sound("assets/sounds/ecto_shoot_1.wav")
     ecto_shoot_sound.set_volume(0.5)
 
-    def __init__(self, direction, center):
+    def __init__(self, direction, spawn_pos, max_range=250):
         rect = Rect(0, 0, 16, 16)
-        rect.center = center
+        rect.center = spawn_pos
+        self.max_range = max_range
         super().__init__(rect,
                          image.load("assets/sprites/player/ectoplasm.png").convert_alpha(),
                          direction,
@@ -180,6 +220,96 @@ class Ectoplasm(Projectile):
             super().move()
 
 
+class EctoShooter:
+    num_ecto = 0
+    max_num_ecto = 5
+    ectos: list[Ectoplasm] = []
+    spawn_pos: tuple = GAME_RECT.center
+    guide_width = 16
+    shooting: bool = False
+
+    def set_spawn_pos(self, spawn_pos):
+        self.spawn_pos = spawn_pos
+
+    def get_shoot_direction(self):
+        dx = CURSOR_RECT.centerx - self.spawn_pos[0]
+        dy = CURSOR_RECT.centery - self.spawn_pos[1]
+
+        direction = Vector2(dx, dy)
+        if direction.length() != 0:
+            direction = direction.normalize()
+        return direction
+
+    def create_ecto(self):
+        return Ectoplasm(self.get_shoot_direction(), self.spawn_pos)
+
+    def reset(self):
+        pass
+
+    def shoot(self, _dt):
+        shoot_pressed = mouse.get_pressed()[0]
+        self.shooting = shoot_pressed
+
+        if self.num_ecto >= self.max_num_ecto:
+            if not shoot_pressed:
+                out_of_ecto_sound.play()
+                self.shooting = False
+            self.reset()
+            return None
+
+        if not shoot_pressed:
+            ecto = self.create_ecto()
+            self.num_ecto += 1
+            self.shooting = False
+            self.reset()
+            return ecto
+
+    def get_guide_end_point(self, start_point, direction):
+        return (direction * Ectoplasm.max_range) + start_point
+
+    def draw(self):
+        if not self.shooting:
+            return
+
+        start_point = Vector2(self.spawn_pos)
+        end_point = Vector2(CURSOR_RECT.center)
+        dx = end_point.x - start_point.x
+        dy = end_point.y - start_point.y
+
+        direction = Vector2(dx, dy)
+        if direction.length() != 0:
+            direction = direction.normalize()
+
+        end_point = self.get_guide_end_point(start_point, direction)
+        color = WHITE if self.num_ecto < self.max_num_ecto else Color(255, 0, 0)
+        pg.draw.line(GAME_BACKGROUND, color, start_point, end_point, self.guide_width)
+
+
+class ControlledRangeEctoShooter(EctoShooter):
+    min_range = 50
+    curr_range = min_range
+    max_range = Ectoplasm.max_range
+    time_held = 0
+
+    def reset(self):
+        self.time_held = 0
+        self.curr_range = self.min_range
+
+    def create_ecto(self):
+        return Ectoplasm(self.get_shoot_direction(), self.spawn_pos, self.curr_range)
+
+    def shoot(self, _dt):
+        shoot_pressed = mouse.get_pressed()[0]
+        self.shooting = shoot_pressed
+        self.time_held += _dt
+        updated_range = self.min_range + (self.time_held // 1.5)
+        self.curr_range = updated_range if updated_range <= Ectoplasm.max_range else Ectoplasm.max_range
+        return super().shoot(_dt)
+
+    def get_guide_end_point(self, start_point, direction):
+        return (direction * self.curr_range) + start_point
+
+
 class Player:
     _instance = None
     rect = Rect(600, 400, 32, 32)
@@ -194,11 +324,12 @@ class Player:
     phase_time = 0.33
     max_health = 20
     health = max_health
-    shoot_pressed = False
     shoot_direction: Vector2
     state = "MOVE"
     guide_width = 16
     out_of_ecto = False
+    ecto_shooter = EctoShooter()
+    dt = 0
 
     @classmethod
     def get_instance(cls):
@@ -219,7 +350,7 @@ class Player:
         return direction
 
     def take_damage(self, damage: int):
-        if GOD_MODE:
+        if DEBUG_INVINCIBLE:
             return
         self.health -= damage
 
@@ -233,49 +364,19 @@ class Player:
 
         shoot_pressed = mouse.get_pressed()[0]
         if shoot_pressed:
-            if self.num_ecto >= self.max_num_ecto:
-                self.out_of_ecto = True
-                out_of_ecto_sound.play()
-            else:
-                self.out_of_ecto = False
             self.state = "SHOOT"
 
     def shoot(self):
-        shoot_pressed = mouse.get_pressed()[0]
+        self.ecto_shooter.set_spawn_pos(self.rect.center)
+        ecto = self.ecto_shooter.shoot(self.dt)
 
-        if self.out_of_ecto:
-            if not shoot_pressed:
-                self.state = "MOVE"
-            return
-
-        dx = CURSOR_RECT.centerx - self.rect.centerx
-        dy = CURSOR_RECT.centery - self.rect.centery
-
-        direction = Vector2(dx, dy)
-        if direction.length() != 0:
-            direction = direction.normalize()
-
-        if not shoot_pressed:
-            ecto = Ectoplasm(direction, self.rect.center)
-            self.ectos.append(ecto)
-            self.shoot_pressed = False
-            self.num_ecto += 1
+        if not self.ecto_shooter.shooting:
+            if ecto:
+                self.ectos.append(ecto)
             self.state = "MOVE"
 
-    def __draw_guide(self):
-        start_point = Vector2(self.rect.center)
-        end_point = Vector2(CURSOR_RECT.center)
-        dx = end_point.x - start_point.x
-        dy = end_point.y - start_point.y
-
-        direction = Vector2(dx, dy)
-        if direction.length() != 0:
-            direction = direction.normalize()
-
-        end_point = (direction * Ectoplasm.max_range) + start_point
-        pg.draw.line(GAME_BACKGROUND, Color(255, 255, 255), start_point, end_point, self.guide_width)
-
-    def update(self):
+    def update(self, dt):
+        self.dt = dt
         match self.state:
             case "MOVE":
                 self.move()
@@ -288,7 +389,7 @@ class Player:
                 ecto.collected = True
                 if not collect_ecto_channel.get_busy():
                     collect_ecto_channel.play(ecto_collected_sound)
-                self.num_ecto -= 1
+                self.ecto_shooter.num_ecto -= 1
 
             ecto.update()
 
@@ -300,8 +401,9 @@ class Player:
         for ecto in self.ectos:
             ecto.draw()
 
-        if self.state == "SHOOT" and not self.out_of_ecto:
-            self.__draw_guide()
+        if self.ecto_shooter.shooting:
+            self.ecto_shooter.draw()
+
         GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
 
 
@@ -395,7 +497,7 @@ class Enemy:
                     danger_weights[(i - 1 + 8) % 8] += 2
                     danger_weights[(i + 1) % 8] += 2
 
-        steer_map = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        steer_map: list[float] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         best_direction_index = 0
         for i in range(8):
             interest = interest_weights[i] - danger_weights[i]
@@ -762,6 +864,7 @@ class Spike(Hazard):
     def active(self):
         if self.rect.colliderect(self.player.rect):
             self.player.take_damage(1)
+            self.sprite = self.inactive_sprite
             spike_deactivate_sound.play()
             self.state = "INACTIVE"
         self.active_time += self.dt
@@ -798,10 +901,7 @@ class HazardManager:
         for row_ind in range(1, self.grid_size[0]):
             for col_ind in range(1, self.grid_size[1]):
                 rand_num = random.randint(0, 64)
-                # SPAWN
                 if rand_num == 64:
-                    # random.randint()
-
                     self.hazards.append(Spike(col_ind * 40, row_ind * 40))
 
     def update(self, dt):
@@ -819,6 +919,8 @@ class Upgrade:
     rect: Rect
     card: Surface
     sold_card = image.load("assets/UI/sold_card.png").convert_alpha()
+    info_card = image.load("assets/UI/empty_card.png")
+    curr_card: Surface
     highlight = Surface((200, 200))
     highlight_rect: Rect
     highlight.fill("white")
@@ -828,12 +930,24 @@ class Upgrade:
     hover_sound_played = False
     hover_offset = 10
     cant_buy_sound_played = False
+    upgrade_id: int = 0
+    info_text: list
+    font_size = 16
+    info_font = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", font_size)
+    info_text_rect: Rect
 
-    def __init__(self, cost: int, card: Surface):
+    def __init__(self, cost: int, card: Surface, info_text: str):
         self.rect = Rect(0, 0, 200, 200)
         self.highlight_rect = Rect(0, 0, 200, 200)
         self.card = card
+        self.curr_card = card
         self.cost = cost
+        self.upgrade_id = Upgrade.upgrade_id
+        Upgrade.upgrade_id += 1
+        self.info_text = generate_lined_text(info_text, 160, self.info_font)
+
+    def update_info_text(self, info_text):
+        self.info_text = generate_lined_text(info_text, 160, self.info_font)
 
     def set_shop_position(self, position: tuple):
         self.rect.x = position[0]
@@ -852,9 +966,15 @@ class Upgrade:
             if not self.hover_sound_played:
                 card_hovered_sound.play()
                 self.hover_sound_played = True
+            self.curr_card = self.info_card if not self.bought else self.sold_card
+            self.rect.x = self.highlight_rect.x + self.hover_offset
+            self.rect.y = self.highlight_rect.y - self.hover_offset
         else:
+            self.curr_card = self.card if not self.bought else self.sold_card
             self.hover_sound_played = False
             self.clicked = False
+            self.rect.x = self.highlight_rect.x
+            self.rect.y = self.highlight_rect.y
             return
 
         if pressed:
@@ -872,6 +992,7 @@ class Upgrade:
                 self.player.num_coins -= self.cost
                 self.bought = True
                 self.apply_upgrade()
+                self.curr_card = self.sold_card
                 card_hovered_sound.stop()
                 upgrade_bought_sound.play()
             else:
@@ -880,67 +1001,87 @@ class Upgrade:
 
     def draw(self):
         if self.hovered:
-            self.rect.x = self.highlight_rect.x + self.hover_offset
-            self.rect.y = self.highlight_rect.y - self.hover_offset
-            GAME_BACKGROUND.blit(self.highlight, (self.highlight_rect.x, self.highlight_rect.y))
-        else:
-            self.rect.x = self.highlight_rect.x
-            self.rect.y = self.highlight_rect.y
+            GAME_BACKGROUND.blit(self.highlight, self.highlight_rect)
 
-        if self.bought:
-            GAME_BACKGROUND.blit(self.sold_card, (self.rect.x, self.rect.y))
-        else:
-            GAME_BACKGROUND.blit(self.card, (self.rect.x, self.rect.y))
+        GAME_BACKGROUND.blit(self.curr_card, self.rect)
+
+        if not self.bought and self.hovered:
+            for i in range(len(self.info_text)):
+                line = self.info_text[i]
+                GAME_BACKGROUND.blit(line, (self.rect.x + 20, self.rect.y + (i * self.font_size) + 20))
 
 
 # UPGRADES BELOW THIS LINE
 class MaxHealthUpgrade(Upgrade):
+
     def __init__(self):
-        super().__init__(5, image.load("assets/UI/max_health_upgrade_card.png").convert())
+        info_text = f"Increase your maximum health by  1 ~ ~ ~MAXIMUM HEALTH:~ ~{self.player.max_health} -> {self.player.max_health + 1}~"
+        super().__init__(5, image.load("assets/UI/max_health_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         self.player.max_health += 1
         self.player.health += 1
+        self.update_info_text(f"Increase your maximum health by  1 ~ ~ ~MAXIMUM HEALTH:~ ~{self.player.max_health} -> {self.player.max_health + 1}~")
 
 
 class NumEctoUpgrade(Upgrade):
     def __init__(self):
-        super().__init__(5, image.load("assets/UI/num_ectoplasm_upgrade_card.png").convert())
+        info_text = f"Increase how many Ectoplasm you can shoot before you run out ~ ~ ~ECTOPLASM:~ ~{self.player.ecto_shooter.max_num_ecto} -> {self.player.ecto_shooter.max_num_ecto + 1}~"
+        super().__init__(5, image.load("assets/UI/num_ectoplasm_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
-        self.player.max_num_ecto += 1
+        self.player.ecto_shooter.max_num_ecto += 1
+        self.update_info_text(f"Increase how many Ectoplasm you can shoot before you run out ~ ~ ~ECTOPLASM RANGE:~ ~{self.player.ecto_shooter.max_num_ecto} -> {self.player.ecto_shooter.max_num_ecto + 1}~")
 
 
 class EctoRangeUpgrade(Upgrade):
     def __init__(self):
-        super().__init__(5, image.load("assets/UI/ectoplasm_range_upgrade_card.png").convert())
+        info_text = f"Increase how far you Ectoplasm travels by 10 percent ~ ~ ~ECTOPLASM RANGE:~ ~{Ectoplasm.max_range} -> {Ectoplasm.max_range * 1.1}~"
+        super().__init__(5, image.load("assets/UI/ectoplasm_range_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         Ectoplasm.max_range *= 1.1
+        self.update_info_text(f"Increase how far you Ectoplasm travels by 10 percent ~ ~ ~ECTOPLASM RANGE:~ ~{Ectoplasm.max_range} -> {Ectoplasm.max_range * 1.1}~")
 
 
 class RestoreHealthUpgrade(Upgrade):
     def __init__(self):
-        super().__init__(10, image.load("assets/UI/restore_health_upgrade_card.png").convert())
+        info_text = f"Restore your health to your maximum health ~ ~ ~HEALTH:~ ~{self.player.health} -> {self.player.max_health}~"
+        super().__init__(10, image.load("assets/UI/restore_health_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         self.player.health = self.player.max_health
+        self.update_info_text(f"Restore your health to your maximum health ~ ~ ~HEALTH:~ ~{self.player.health} -> {self.player.max_health}~")
 
 
 class PlayerSpeedUpgrade(Upgrade):
     def __init__(self):
-        super().__init__(7, image.load("assets/UI/player_speed_upgrade_card.png").convert())
+        info_text = f"Increase your player speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} --> {self.player.speed + 1}~"
+        super().__init__(7, image.load("assets/UI/player_speed_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         self.player.speed += 1
+        self.update_info_text(f"Increase your player speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} -> {self.player.speed + 1}~")
 
 
 class EctoDamageUpgrade(Upgrade):
     def __init__(self):
-        super().__init__(5, image.load("assets/UI/ectoplasm_damage_upgrade_card.png").convert())
+        info_text = f"Increase the damage delt by Ectoplasm by 1 ~ ~ ~ECTOPLASM DAMAGE:~ ~{Ectoplasm.damage} -> {Ectoplasm.damage + 1}~"
+        super().__init__(5, image.load("assets/UI/ectoplasm_damage_upgrade_card.png").convert(), info_text)
 
     def apply_upgrade(self):
         Ectoplasm.damage += 1
+        self.update_info_text(f"Increase the damage delt by Ectoplasm by 1 ~ ~ ~ECTOPLASM DAMAGE:~ ~{Ectoplasm.damage} -> {Ectoplasm.damage + 1}~")
+
+
+class ControlRangeUpgrade(Upgrade):
+    def __init__(self):
+        info_text = "Control the distance of how far you Ectoplasm can shoot by holding down the mouse button before you shoot"
+        super().__init__(20, image.load("assets/UI/empty_card.png").convert(), info_text)
+
+    def apply_upgrade(self):
+        self.player.ecto_shooter = ControlledRangeEctoShooter()
+        self.update_info_text("Control the distance of how far you Ectoplasm can shoot by holding down the mouse button before you shoot")
 
 
 class Shop:
@@ -958,7 +1099,8 @@ class Shop:
         RestoreHealthUpgrade(),
         EctoRangeUpgrade(),
         PlayerSpeedUpgrade(),
-        EctoDamageUpgrade()
+        EctoDamageUpgrade(),
+        ControlRangeUpgrade()
     ]
 
     shop_upgrades: list[Upgrade] = []
@@ -1006,10 +1148,12 @@ class GameUI:
     font = pygame.font.Font("assets/UI/fonts/cambria-bold.ttf", 50)
     timer = 0
     timer_active = False
+    dt = 0
 
     # Load ectoplasm image
     ectoplasm_image = pygame.image.load('assets/sprites/player/ectoplasm.png').convert_alpha()
     ectoplasm_image = pygame.transform.scale(ectoplasm_image, (50, 50))
+    healthbar_boarder = image.load("assets/UI/healthbar.png").convert_alpha()
 
     def __init__(self):
         self.player = Player.get_instance()
@@ -1018,13 +1162,15 @@ class GameUI:
         max_health = self.player.max_health
         bar_width = 200
         bar_height = 50
+        boarder_offset = 19
 
         # Health bar background
-        pygame.draw.rect(surface, RED, (x, y, bar_width, bar_height))
+        pygame.draw.rect(surface, HEALTHBAR_LOWER_COLOR, (x, y, bar_width, bar_height))
 
         # Health bar foreground (based on current health)
         current_health_width = (self.player.health / max_health) * bar_width
-        pygame.draw.rect(surface, GREEN, (x, y, current_health_width, bar_height))
+        pygame.draw.rect(surface, HEALTHBAR_HIGHER_COLOR, (x, y, current_health_width, bar_height))
+        SCREEN.blit(self.healthbar_boarder, (x - boarder_offset, y))
 
     def draw_coin_counter(self, surface, x, y):
         text = self.font.render(f"Coins: {self.player.num_coins}", True, WHITE)
@@ -1032,7 +1178,7 @@ class GameUI:
 
     def draw_ectoplasm(self, surface, x, y):
         text = self.font.render(
-            f"{self.player.max_num_ecto - self.player.num_ecto} / {self.player.max_num_ecto}", True, WHITE
+            f"{self.player.ecto_shooter.max_num_ecto - self.player.ecto_shooter.num_ecto}/{self.player.ecto_shooter.max_num_ecto}", True, WHITE
         )
         text_rect = text.get_rect()
         text_rect.x = x + self.ectoplasm_image.get_width() + 20
@@ -1047,12 +1193,12 @@ class GameUI:
         self.timer += dt
         hours = self.timer // 3600000
         hours_milli = hours * 360000
-        minutes = (self.timer - hours_milli) // 60000
-        minutes_milli = minutes * 60000
-        seconds = (self.timer - hours_milli - minutes_milli) // 1000
+        mins = (self.timer - hours_milli) // 60000
+        mins_milli = mins * 60000
+        secs = (self.timer - hours_milli - mins_milli) // 1000
 
-        sec_text = str(seconds) if seconds >= 10 else "0" + str(seconds)
-        min_text = str(minutes) if minutes >= 10 else "0" + str(minutes)
+        sec_text = str(secs) if secs >= 10 else "0" + str(secs)
+        min_text = str(mins) if mins >= 10 else "0" + str(mins)
         hour_text = str(hours) if hours >= 10 else "0" + str(hours)
 
         text = self.font.render(f"{hour_text}:{min_text}:{sec_text}", True, "White")
@@ -1062,20 +1208,43 @@ class GameUI:
 
         SCREEN.blit(text, text_rect)
 
+    def update(self, dt):
+        self.dt = dt
+
+    def draw(self):
+        SCREEN.fill("darkslategrey")
+        # Draw the UI elements in a horizontal line
+        y_position = GAME_HEIGHT + 15  # Keep the same Y position for all elements
+
+        # Starting X positions for the elements
+        x_health_bar = 50
+        x_coin_counter = x_health_bar + 300  # Adjust spacing after health bar
+        x_ectoplasm = x_coin_counter + 300  # Adjust spacing after coin counter
+
+        # Draw the health bar
+        self.draw_health_bar(SCREEN, x_health_bar, y_position)
+
+        # Draw the coin counter
+        self.draw_coin_counter(SCREEN, x_coin_counter, y_position)
+
+        # Draw the ectoplasm image
+        self.draw_ectoplasm(SCREEN, x_ectoplasm, y_position)
+
+        self.draw_timer(self.dt, y_position)
+
 
 class Game:
     _instance = None
-    player = None
-    enemy_manager = None
-    hazard_manager = None
-    shop = None
-    RUNNING = True
+    player: Player
+    enemy_manager: EnemyManager
+    hazard_manager: HazardManager
+    shop: Shop
     curr_wave = 1
     MAX_WAVES = 3
     clock = time.Clock()
     state = "HOME"
     prev_state = "WAVE"
-    game_ui: GameUI
+    game_ui = GameUI()
     info_screen = image.load("assets/UI/info_screen.png").convert()
     dt = 0
 
@@ -1085,101 +1254,7 @@ class Game:
             cls._instance = cls.__new__(cls)
         return cls._instance
 
-    def restart_game(self):
-        # TODO IMPLEMENT PROPERLY
-        self.curr_wave = 1
-        self.enemy_manager.load_enemies(self.curr_wave)
-        self.player.rect.center = GAME_RECT.center
-        self.state = "WAVE"
-
-    def update(self):
-        self.dt = self.clock.get_time()
-        keys = pg.key.get_pressed()
-
-        match self.state:
-            case "HOME":
-                self.state = "INFO"
-
-            case "WAVE":
-                if keys[K_i]:
-                    self.state = "INFO"
-                    self.prev_state = "WAVE"
-                self.game_ui.timer_active = True
-                self.player.update()
-                self.enemy_manager.update(self.dt)
-                self.hazard_manager.update(self.dt)
-
-                if self.player.health <= 0:
-                    self.state = "GAME_OVER"
-
-                if self.enemy_manager.wave_complete:
-                    self.player.rect.centerx = GAME_RECT.centerx
-                    self.player.rect.centery = GAME_RECT.centery
-                    self.player.num_ecto = 0
-                    self.player.ectos = []
-                    self.enemy_manager.dead_projectiles = []
-
-                    if self.curr_wave < self.MAX_WAVES:
-                        self.shop.set_upgrades()
-                        self.state = "SHOP"
-                    else:
-                        self.state = "GAME_OVER"
-
-            case "SHOP":
-                if keys[K_i]:
-                    self.state = "INFO"
-                    self.prev_state = "SHOP"
-
-                if keys[K_SPACE]:
-                    self.shop.close()
-                    self.curr_wave += 1
-                    self.enemy_manager.load_enemies(self.curr_wave)
-                    self.hazard_manager.load_hazards()
-                    self.state = "WAVE"
-
-                self.shop.update()
-
-            case "INFO":
-                self.game_ui.timer_active = False
-                if keys[K_e]:
-                    self.state = self.prev_state
-
-            case "GAME_OVER":
-                if keys[K_SPACE]:
-                    self.restart_game()
-                if keys[K_e]:
-                    self.RUNNING = False
-
-    def draw(self):
-        match self.state:
-            case "WAVE":
-                SCREEN.blit(GAME_BACKGROUND, (0, 0))
-                GAME_BACKGROUND.fill(BG_COLOR)
-                self.hazard_manager.draw()
-                self.player.draw()
-                self.enemy_manager.draw()
-
-            case "SHOP":
-                SCREEN.blit(GAME_BACKGROUND, (0, 0))
-                GAME_BACKGROUND.fill(BG_COLOR)
-                self.shop.draw()
-
-            case "INFO":
-                SCREEN.blit(self.info_screen, (0, 0))
-
-            case "GAME_OVER":
-                if self.player.health > 0:
-                    SCREEN.blit(image.load("assets/UI/congratulations.png"), (0, 0))
-                else:
-                    SCREEN.blit(image.load("assets/UI/you_died.png"), (0, 0))
-
-        mouse_pos = mouse.get_pos()
-        CURSOR_RECT.x = mouse_pos[0]
-        CURSOR_RECT.y = mouse_pos[1]
-        SCREEN.blit(CURSOR, (CURSOR_RECT.x, CURSOR_RECT.y))
-        display.flip()
-
-    def start(self) -> None:
+    def load_entities(self):
         self.player = Player.get_instance()
         self.enemy_manager = EnemyManager.get_instance()
         self.shop = Shop().get_instance()
@@ -1188,41 +1263,152 @@ class Game:
         self.hazard_manager = HazardManager.get_instance()
         self.hazard_manager.load_hazards()
 
-        while self.RUNNING:
-            for e in pg.event.get():
-                if e.type == QUIT:
-                    pg.quit()
-                    sys.exit()
-                if e.type == KEYDOWN:
-                    if e.key == K_ESCAPE:
-                        pg.quit()
-                        sys.exit()
+    def restart_game(self):
+        # TODO IMPLEMENT PROPERLY
+        self.curr_wave = 1
+        self.enemy_manager.load_enemies(self.curr_wave)
+        self.player.rect.center = GAME_RECT.center
+        self.state = "WAVE"
 
-            self.update()
-            self.draw()
+    @staticmethod
+    def update_cursor():
+        CURSOR_RECT.topleft = mouse.get_pos()
 
-            SCREEN.fill("darkslategrey")
-            # Draw the UI elements in a horizontal line
-            y_position = GAME_HEIGHT + 15  # Keep the same Y position for all elements
+    @staticmethod
+    def draw_cursor():
+        SCREEN.blit(CURSOR, (CURSOR_RECT.x, CURSOR_RECT.y))
 
-            # Starting X positions for the elements
-            x_health_bar = 50
-            x_coin_counter = x_health_bar + 300  # Adjust spacing after health bar
-            x_ectoplasm = x_coin_counter + 300  # Adjust spacing after coin counter
+    def update_wave(self):
+        keys = pg.key.get_pressed()
+        if keys[K_i]:
+            self.state = "INFO"
+            self.prev_state = "WAVE"
+        self.game_ui.timer_active = True
+        self.player.update(self.dt)
+        self.enemy_manager.update(self.dt)
+        self.hazard_manager.update(self.dt)
 
-            # Draw the health bar
-            self.game_ui.draw_health_bar(SCREEN, x_health_bar, y_position)
+        if self.player.health <= 0:
+            self.state = "GAME_OVER"
 
-            # Draw the coin counter
-            self.game_ui.draw_coin_counter(SCREEN, x_coin_counter, y_position)
+        if self.enemy_manager.wave_complete:
+            self.player.rect.centerx = GAME_RECT.centerx
+            self.player.rect.centery = GAME_RECT.centery
+            self.player.ecto_shooter.num_ecto = 0
+            self.player.ectos = []
+            self.enemy_manager.dead_projectiles = []
 
-            # Draw the ectoplasm image
-            self.game_ui.draw_ectoplasm(SCREEN, x_ectoplasm, y_position)
+            if self.curr_wave < self.MAX_WAVES:
+                self.shop.set_upgrades()
+                self.state = "SHOP"
+            else:
+                self.state = "GAME_OVER"
 
-            self.game_ui.draw_timer(self.dt, y_position)
+    def update_shop(self):
+        keys = pg.key.get_pressed()
+        if keys[K_i]:
+            self.state = "INFO"
+            self.prev_state = "SHOP"
 
-            self.clock.tick(TICK_RATE)
+        if keys[K_SPACE]:
+            self.shop.close()
+            self.curr_wave += 1
+            self.enemy_manager.load_enemies(self.curr_wave)
+            self.hazard_manager.load_hazards()
+            self.state = "WAVE"
+
+        self.shop.update()
+
+    def update_info(self):
+        keys = pg.key.get_pressed()
+        self.game_ui.timer_active = False
+        if keys[K_e]:
+            self.state = self.prev_state
+
+    def update_home(self):
+        self.state = "INFO"
+
+    def update_game_over(self):
+        keys = pg.key.get_pressed()
+        if keys[K_SPACE]:
+            self.restart_game()
+
+    def draw_home(self):
+        pass
+
+    def draw_wave(self):
+        SCREEN.blit(GAME_BACKGROUND, (0, 0))
+        GAME_BACKGROUND.fill(BG_COLOR)
+        self.hazard_manager.draw()
+        self.player.draw()
+        self.enemy_manager.draw()
+
+    def draw_shop(self):
+        SCREEN.blit(GAME_BACKGROUND, (0, 0))
+        GAME_BACKGROUND.fill(BG_COLOR)
+        self.shop.draw()
+
+    def draw_info(self):
+        SCREEN.blit(self.info_screen, (0, 0))
+
+    def draw_game_over(self):
+        if self.player.health > 0:
+            SCREEN.blit(image.load("assets/UI/congratulations.png"), (0, 0))
+        else:
+            SCREEN.blit(image.load("assets/UI/you_died.png"), (0, 0))
+
+    def update(self, dt):
+        self.dt = dt
+        match self.state:
+            case "HOME":
+                self.update_home()
+            case "WAVE":
+                self.update_wave()
+            case "SHOP":
+                self.update_shop()
+            case "INFO":
+                self.update_info()
+            case "GAME_OVER":
+                self.update_game_over()
+
+        self.game_ui.update(self.dt)
+        self.update_cursor()
+
+    def draw(self):
+        self.game_ui.draw()
+
+        match self.state:
+            case "HOME":
+                self.draw_home()
+            case "WAVE":
+                self.draw_wave()
+            case "SHOP":
+                self.draw_shop()
+            case "INFO":
+                self.draw_info()
+            case "GAME_OVER":
+                self.draw_game_over()
+
+        self.draw_cursor()
+        display.flip()
 
 
 if __name__ == "__main__":
-    Game.get_instance().start()
+    game = Game.get_instance()
+    game.load_entities()
+    clock = time.Clock()
+
+    while True:
+        for e in pg.event.get():
+            if e.type == QUIT:
+                pg.quit()
+                sys.exit()
+            if e.type == KEYDOWN:
+                if e.key == K_ESCAPE:
+                    pg.quit()
+                    sys.exit()
+
+        game.update(clock.get_time())
+        game.draw()
+
+        clock.tick(60)
