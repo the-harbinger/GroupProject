@@ -20,6 +20,7 @@ GAME_HEIGHT = WINDOW_HEIGHT - 80
 GAME_WIDTH = WINDOW_WIDTH
 GAME_RECT = Rect(0, 0, GAME_WIDTH, GAME_HEIGHT)
 GAME_BACKGROUND: Surface = Surface((GAME_WIDTH, GAME_HEIGHT))
+KEYS = pg.key.get_pressed()
 
 # SOUNDS
 mixer.init()
@@ -60,7 +61,15 @@ TICK_RATE = 60
 WHITE = (255, 255, 255)
 HEALTHBAR_LOWER_COLOR = (124, 60, 92)
 HEALTHBAR_HIGHER_COLOR = (0, 172, 252)
+DARK_BLUE = (0, 103, 139)
 BG_COLOR = "Black"
+
+# FONTS
+CB_12 = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", 12)
+CB_16 = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", 16)
+CB_24 = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", 24)
+CB_32 = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", 32)
+CB_50 = pygame.font.Font("assets/UI/fonts/cambria-bold.ttf", 50)
 
 V_ZERO = Vector2(0, 0)
 V_NORTH = Vector2(0, -1)
@@ -73,8 +82,8 @@ V_WEST = Vector2(-1, 0)
 V_NORTH_WEST = Vector2(-1, -1)
 
 # DEBUG
-DEBUG_INVINCIBLE = True
-CUSTOM_SHOP_DEBUG = False
+DEBUG_INVINCIBLE = False
+CUSTOM_SHOP_DEBUG = True
 
 
 def create_line(x1, y1, x2, y2):
@@ -116,7 +125,7 @@ def generate_empty_grid(num_rows: int, num_cols: int) -> list[list]:
     return grid
 
 
-def generate_lined_text(text, max_length, text_font):
+def generate_lined_text(text, max_length, text_font, color):
     lined_text = []
     start = 0
     curr = ""
@@ -125,7 +134,7 @@ def generate_lined_text(text, max_length, text_font):
     while i < text_length:
         if text[i] == "~":
             if curr != "":
-                lined_text.append(text_font.render(curr, True, WHITE))
+                lined_text.append(text_font.render(curr.strip(), True, color))
                 curr = ""
             j = i + 1
             forced_line = ""
@@ -133,7 +142,7 @@ def generate_lined_text(text, max_length, text_font):
                 forced_line += text[j]
                 j += 1
 
-            lined_text.append(text_font.render(forced_line, True, WHITE))
+            lined_text.append(text_font.render(forced_line.strip(), True, color))
             start = j + 1
             i = start
             continue
@@ -142,16 +151,38 @@ def generate_lined_text(text, max_length, text_font):
             if i == text_length - 1:
                 i += 1
             word = text[start:i]
-            test_text = text_font.render(curr + word, True, WHITE)
-            if test_text.get_width() < max_length:
-                curr = curr + word + " "
+            words = curr + " " + word
+            text_size = text_font.size(words)
+            if text_size[0] < max_length:
+                curr = words
             else:
-                lined_text.append(text_font.render(curr, True, WHITE))
+                lined_text.append(text_font.render(curr.strip(), True, color))
                 curr = word + " "
             start = i + 1
         i += 1
 
+    if curr != "":
+        lined_text.append(text_font.render(curr.strip(), True, WHITE))
     return lined_text
+
+
+class Button:
+    clicked: bool = False
+    hovered: bool = False
+    rect: Rect
+
+    def __init__(self, rect: Rect):
+        self.rect = rect
+
+
+    def handle_clicked(self):
+        pass
+
+    def update(self):
+        pressed = False
+
+    def draw(self):
+        pass
 
 
 class Projectile:
@@ -405,6 +436,33 @@ class Player:
             self.ecto_shooter.draw()
 
         GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
+
+
+class Essence:
+    player = Player.get_instance()
+    sprite: Surface
+    rect: Rect
+    value: int
+    dt: int
+    collected: bool = False
+
+    def __init__(self, sprite: Surface, value: int):
+        self.value = value
+        self.sprite = Surface((16, 16))
+        self.sprite.fill("Yellow")
+
+    def give_value(self):
+        self.player.num_coins += self.value
+
+    def update(self, _dt):
+        self.dt = _dt
+
+        if self.player.rect.colliderect(self.rect):
+            self.collected = True
+            self.give_value()
+
+    def draw(self):
+        SCREEN.blit(self.sprite, self.rect)
 
 
 class Enemy:
@@ -937,23 +995,29 @@ class Upgrade:
     hover_offset = 10
     cant_buy_sound_played = False
     upgrade_id: int = 0
-    info_text: list
-    font_size = 16
-    info_font = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", font_size)
-    info_text_rect: Rect
+    info_text: list[Surface]
+    upgrade_text: list[Surface]
+    info_font = CB_16
+    upgrade_font = CB_24
+    text_offset = tuple((20, 20))
+    cost_text: Surface
 
-    def __init__(self, cost: int, card: Surface, info_text: str):
+    def __init__(self, cost: int, info_text: str, upgrade_text: str):
         self.rect = Rect(0, 0, 200, 200)
         self.highlight_rect = Rect(0, 0, 200, 200)
-        self.card = card
-        self.curr_card = card
+        self.card = pg.image.load("assets/shop/empty_card_1.png")
+        self.curr_card = self.card
+
         self.cost = cost
         self.upgrade_id = Upgrade.upgrade_id
+        self.info_text = generate_lined_text(info_text, 160, self.info_font, WHITE)
+        self.upgrade_text = generate_lined_text(upgrade_text, 160, self.upgrade_font, WHITE)
+        self.cost_text = CB_24.render(f"{self.cost} Essence", True, DARK_BLUE)
+
         Upgrade.upgrade_id += 1
-        self.info_text = generate_lined_text(info_text, 160, self.info_font)
 
     def update_info_text(self, info_text):
-        self.info_text = generate_lined_text(info_text, 160, self.info_font)
+        self.info_text = generate_lined_text(info_text, 160, self.info_font, WHITE)
 
     def set_shop_position(self, position: tuple):
         self.rect.x = position[0]
@@ -1002,6 +1066,7 @@ class Upgrade:
                 card_hovered_sound.stop()
                 upgrade_bought_sound.play()
             else:
+                card_hovered_sound.stop()
                 cant_buy_sound.play()
             self.clicked = False
 
@@ -1011,10 +1076,18 @@ class Upgrade:
 
         GAME_BACKGROUND.blit(self.curr_card, self.rect)
 
-        if not self.bought and self.hovered:
-            for i in range(len(self.info_text)):
-                line = self.info_text[i]
-                GAME_BACKGROUND.blit(line, (self.rect.x + 20, self.rect.y + (i * self.font_size) + 20))
+        if not self.bought:
+            if self.hovered:
+                for i in range(len(self.info_text)):
+                    line = self.info_text[i]
+                    GAME_BACKGROUND.blit(line, (self.rect.x + self.text_offset[0], self.rect.y + (i * 16) + self.text_offset[1]))
+            else:
+                for i in range(len(self.upgrade_text)):
+                    line = self.upgrade_text[i]
+                    line_rect = line.get_rect()
+                    GAME_BACKGROUND.blit(line, (self.rect.centerx - (line_rect.w // 2), self.rect.y + (i * 24) + self.text_offset[1]))
+
+                GAME_BACKGROUND.blit(self.cost_text, (self.rect.centerx - (self.cost_text.get_rect().w // 2), self.rect.bottom - self.text_offset[1] - 24))
 
 
 # UPGRADES BELOW THIS LINE
@@ -1022,7 +1095,8 @@ class MaxHealthUpgrade(Upgrade):
 
     def __init__(self):
         info_text = f"Increase your maximum health by  1 ~ ~ ~MAXIMUM HEALTH:~ ~{self.player.max_health} -> {self.player.max_health + 1}~"
-        super().__init__(5, image.load("assets/shop/max_health_upgrade_card.png").convert(), info_text)
+        upgrade_text = "Max Health ~+1~"
+        super().__init__(5, info_text, upgrade_text)
 
     def apply_upgrade(self):
         self.player.max_health += 1
@@ -1033,7 +1107,8 @@ class MaxHealthUpgrade(Upgrade):
 class NumEctoUpgrade(Upgrade):
     def __init__(self):
         info_text = f"Increase how many Ectoplasm you can shoot before you run out ~ ~ ~ECTOPLASM:~ ~{self.player.ecto_shooter.max_num_ecto} -> {self.player.ecto_shooter.max_num_ecto + 1}~"
-        super().__init__(5, image.load("assets/shop/num_ectoplasm_upgrade_card.png").convert(), info_text)
+        upgrade_text = "Ectoplasm ~+1~"
+        super().__init__(5, info_text, upgrade_text)
 
     def apply_upgrade(self):
         self.player.ecto_shooter.max_num_ecto += 1
@@ -1043,7 +1118,8 @@ class NumEctoUpgrade(Upgrade):
 class EctoRangeUpgrade(Upgrade):
     def __init__(self):
         info_text = f"Increase how far you Ectoplasm travels by 10 percent ~ ~ ~ECTOPLASM RANGE:~ ~{Ectoplasm.max_range} -> {Ectoplasm.max_range * 1.1}~"
-        super().__init__(5, image.load("assets/shop/ectoplasm_range_upgrade_card.png").convert(), info_text)
+        upgrade_text = "Ectoplasm ~+10%~"
+        super().__init__(5, info_text, upgrade_text)
 
     def apply_upgrade(self):
         Ectoplasm.max_range *= 1.1
@@ -1052,8 +1128,9 @@ class EctoRangeUpgrade(Upgrade):
 
 class RestoreHealthUpgrade(Upgrade):
     def __init__(self):
-        info_text = f"Restore your health to your maximum health ~ ~ ~HEALTH:~ ~{self.player.health} -> {self.player.max_health}~"
-        super().__init__(10, image.load("assets/shop/restore_health_upgrade_card.png").convert(), info_text)
+        info_text = f"Restore your SOUL to your MAXIMUM SOUL ~ ~ ~SOUL:~ ~{self.player.health} -> {self.player.max_health}~"
+        upgrade_text = "Soul ~Restoration~"
+        super().__init__(10, info_text, upgrade_text)
 
     def apply_upgrade(self):
         self.player.health = self.player.max_health
@@ -1063,7 +1140,8 @@ class RestoreHealthUpgrade(Upgrade):
 class PlayerSpeedUpgrade(Upgrade):
     def __init__(self):
         info_text = f"Increase your movement speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} -> {self.player.speed + 1}~"
-        super().__init__(7, image.load("assets/shop/player_speed_upgrade_card.png").convert(), info_text)
+        upgrade_text = "Swift ~Spirit~"
+        super().__init__(7, info_text, upgrade_text)
 
     def apply_upgrade(self):
         self.player.speed += 1
@@ -1073,7 +1151,8 @@ class PlayerSpeedUpgrade(Upgrade):
 class EctoDamageUpgrade(Upgrade):
     def __init__(self):
         info_text = f"Increase the damage delt by Ectoplasm by 1 ~ ~ ~ECTOPLASM DAMAGE:~ ~{Ectoplasm.damage} -> {Ectoplasm.damage + 1}~"
-        super().__init__(5, image.load("assets/shop/ectoplasm_damage_upgrade_card.png").convert(), info_text)
+        upgrade_text = "Injurious ~Ectoplasm~"
+        super().__init__(5, info_text, upgrade_text)
 
     def apply_upgrade(self):
         Ectoplasm.damage += 1
@@ -1083,7 +1162,8 @@ class EctoDamageUpgrade(Upgrade):
 class ControlRangeUpgrade(Upgrade):
     def __init__(self):
         info_text = "Control the distance of how far your Ectoplasm travels by holding down the mouse button before you shoot"
-        super().__init__(20, image.load("assets/shop/empty_card.png").convert(), info_text)
+        upgrade_text = "Spectral ~Concentration~"
+        super().__init__(20, info_text, upgrade_text)
 
     def apply_upgrade(self):
         self.player.ecto_shooter = ControlledRangeEctoShooter()
@@ -1093,8 +1173,7 @@ class ControlRangeUpgrade(Upgrade):
 class Shop:
     _instance = None
     rect: Rect
-    shop_font = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", 24)
-    continue_text = shop_font.render("Press [SPACE] to Continue", True, WHITE)
+    continue_text = CB_24.render("Press [SPACE] to Continue", True, WHITE)
     continue_text_rect = continue_text.get_rect()
     continue_text_rect.centerx = GAME_RECT.centerx
     continue_text_rect.bottom = GAME_HEIGHT - 20
@@ -1133,7 +1212,7 @@ class Shop:
             self.shop_upgrades = [
                 self.all_upgrades[0],
                 self.all_upgrades[1],
-                self.all_upgrades[2]
+                self.all_upgrades[6]
             ]
             for i in range(3):
                 self.shop_upgrades[i].set_shop_position(self.positions[i])
@@ -1189,11 +1268,11 @@ class GameUI:
         SCREEN.blit(self.healthbar_boarder, (x - boarder_offset, y))
 
     def draw_coin_counter(self, surface, x, y):
-        text = self.font.render(f"Coins: {self.player.num_coins}", True, WHITE)
+        text = CB_50.render(f"Coins: {self.player.num_coins}", True, WHITE)
         surface.blit(text, (x, y))
 
     def draw_ectoplasm(self, surface, x, y):
-        text = self.font.render(
+        text = CB_50.render(
             f"{self.player.ecto_shooter.max_num_ecto - self.player.ecto_shooter.num_ecto}/{self.player.ecto_shooter.max_num_ecto}", True, WHITE
         )
         text_rect = text.get_rect()
@@ -1217,7 +1296,7 @@ class GameUI:
         min_text = str(mins) if mins >= 10 else "0" + str(mins)
         hour_text = str(hours) if hours >= 10 else "0" + str(hours)
 
-        text = self.font.render(f"{hour_text}:{min_text}:{sec_text}", True, "White")
+        text = CB_50.render(f"{hour_text}:{min_text}:{sec_text}", True, "White")
         text_rect = text.get_rect()
         text_rect.x = GAME_RECT.right - text_rect.w - 20
         text_rect.y = y
