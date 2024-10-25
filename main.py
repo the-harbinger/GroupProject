@@ -10,12 +10,18 @@ import random
 
 # GLOBALS
 pg.init()
+WHITE = (255, 255, 255)
+HEALTHBAR_LOWER_COLOR = (124, 60, 92)
+HEALTHBAR_HIGHER_COLOR = (0, 172, 252)
+DARK_BLUE = (0, 103, 139)
+BG_COLOR = "Black"
+SCREEN_COLOR = DARK_BLUE
 display.set_caption("Ecto-Blast-Em")
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 720
 monitor_size = [pygame.display.Info().current_w, pygame.display.Info().current_h]
 SCREEN = display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-SCREEN.fill("Black")
+SCREEN.fill(SCREEN_COLOR)
 GAME_HEIGHT = WINDOW_HEIGHT - 80
 GAME_WIDTH = WINDOW_WIDTH
 GAME_RECT = Rect(0, 0, GAME_WIDTH, GAME_HEIGHT)
@@ -58,12 +64,6 @@ CURSOR = image.load("assets/sprites/player/cursor.png").convert_alpha()
 
 TICK_RATE = 60
 
-WHITE = (255, 255, 255)
-HEALTHBAR_LOWER_COLOR = (124, 60, 92)
-HEALTHBAR_HIGHER_COLOR = (0, 172, 252)
-DARK_BLUE = (0, 103, 139)
-BG_COLOR = "Black"
-
 # FONTS
 CB_12 = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", 12)
 CB_16 = pg.font.Font("assets/UI/fonts/cambria-bold.ttf", 16)
@@ -80,9 +80,10 @@ V_SOUTH = Vector2(0, 1)
 V_SOUTH_WEST = Vector2(-1, 1)
 V_WEST = Vector2(-1, 0)
 V_NORTH_WEST = Vector2(-1, -1)
+GRAVITY = Vector2(0, 5)
 
 # DEBUG
-DEBUG_INVINCIBLE = False
+DEBUG_INVINCIBLE = True
 CUSTOM_SHOP_DEBUG = True
 
 
@@ -90,24 +91,48 @@ def create_line(x1, y1, x2, y2):
     return (x1, y1), (x2, y2)
 
 
+def check_left_wall_collision(rect: Rect) -> bool:
+    if rect.left <= 0:
+        rect.x = 0
+        return True
+    return False
+
+
+def check_right_wall_collision(rect: Rect) -> bool:
+    if rect.right >= GAME_WIDTH:
+        rect.x = GAME_WIDTH - rect.width
+        return True
+    return False
+
+
+def check_ceil_collision(rect: Rect) -> bool:
+    if rect.top <= 0:
+        rect.y = 0
+        return True
+    return False
+
+
+def check_floor_collision(rect: Rect) -> bool:
+    if rect.bottom >= GAME_HEIGHT:
+        rect.y = GAME_HEIGHT - rect.h
+        return True
+    return False
+
+
 def check_wall_collision(rect: Rect) -> bool:
     collides: bool = False
 
-    if rect.bottom >= GAME_HEIGHT:
-        rect.y = GAME_HEIGHT - rect.h
+    if check_right_wall_collision(rect):
         collides = True
 
-    if rect.top <= 0:
-        rect.y = 0
+    if check_left_wall_collision(rect):
         collides = True
 
-    if rect.right >= GAME_WIDTH:
-        rect.x = GAME_WIDTH - rect.width
+    if check_floor_collision(rect):
         collides = True
 
-    if rect.left <= 0:
+    if check_ceil_collision(rect):
         collides = True
-        rect.x = 0
 
     return collides
 
@@ -137,6 +162,7 @@ def generate_lined_text(text, max_length, text_font, color):
                 lined_text.append(text_font.render(curr.strip(), True, color))
                 curr = ""
             j = i + 1
+            start = j
             forced_line = ""
             while j < text_length and text[j] != "~":
                 forced_line += text[j]
@@ -147,42 +173,32 @@ def generate_lined_text(text, max_length, text_font, color):
             i = start
             continue
 
-        elif text[i] == " " or i == text_length - 1:
-            if i == text_length - 1:
-                i += 1
+        elif text[i] == " ":
             word = text[start:i]
-            words = curr + " " + word
-            text_size = text_font.size(words)
+            line = curr + " " + word
+            text_size = text_font.size(line)
             if text_size[0] < max_length:
-                curr = words
+                curr = line
             else:
                 lined_text.append(text_font.render(curr.strip(), True, color))
-                curr = word + " "
+                curr = " " + word
             start = i + 1
         i += 1
 
     if curr != "":
-        lined_text.append(text_font.render(curr.strip(), True, WHITE))
+        lined_text.append(text_font.render((curr.strip() + " " + text[start:text_length]).strip(), True, WHITE))
     return lined_text
 
 
-class Button:
-    clicked: bool = False
-    hovered: bool = False
-    rect: Rect
+def direction_to(pos: tuple, other_pos: tuple):
+    dy = other_pos[1] - pos[1]
+    dx = other_pos[0] - pos[0]
 
-    def __init__(self, rect: Rect):
-        self.rect = rect
+    direction = Vector2(dx, dy)
 
-
-    def handle_clicked(self):
-        pass
-
-    def update(self):
-        pressed = False
-
-    def draw(self):
-        pass
+    if direction.length() != 0:
+        direction = direction.normalize()
+    return direction
 
 
 class Projectile:
@@ -348,7 +364,7 @@ class Player:
     velocity = V_ZERO
     ectos: list[Ectoplasm] = []
     speed = 5
-    num_coins = 400
+    num_coins = 0
     num_ecto = 0
     max_num_ecto = 5
     phase_speed_modifier = 1.5
@@ -431,37 +447,79 @@ class Player:
     def draw(self):
         for ecto in self.ectos:
             ecto.draw()
-
-        if self.ecto_shooter.shooting:
-            self.ecto_shooter.draw()
-
+        self.ecto_shooter.draw()
         GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
 
 
 class Essence:
     player = Player.get_instance()
-    sprite: Surface
-    rect: Rect
+    sprite = image.load("assets/sprites/player/essence.png").convert_alpha()
+    rect: Rect = Rect(0, 0, 16, 16)
     value: int
     dt: int
     collected: bool = False
+    direction: Vector2
+    velocity: Vector2
+    speed = 5
+    max_y = GAME_HEIGHT
+    uncollect_timer = 5000
+    uncollect_time = 0
+    blink_timer = 100
+    blink_time = 0
+    alpha = 255
+    despawn = False
 
-    def __init__(self, sprite: Surface, value: int):
+    def __init__(self, value: int, spawn_pos: tuple):
+        self.max_y = random.randint(spawn_pos[1] + 8, spawn_pos[1] + 24)
         self.value = value
-        self.sprite = Surface((16, 16))
-        self.sprite.fill("Yellow")
+        self.rect.center = spawn_pos
+        self.direction = V_NORTH.rotate(random.randint(-45, -15)) if random.randint(1, 2) == 1 \
+            else V_NORTH.rotate(random.randint(15, 45))
 
     def give_value(self):
         self.player.num_coins += self.value
 
     def update(self, _dt):
-        self.dt = _dt
+        if self.despawn:
+            return
 
+        self.dt = _dt
+        self.uncollect_time += self.dt
+
+        if self.uncollect_time >= self.uncollect_timer:
+            self.despawn = True
+            return
+
+        if self.uncollect_time >= self.uncollect_timer - 1000:
+            self.blink_time += self.dt
+
+            if self.blink_time >= self.blink_timer:
+                self.alpha = 255 if self.alpha == 100 else 100
+                self.blink_time = 0
+
+        if self.rect.colliderect(self.player.rect):
+            self.give_value()
+            self.despawn = True
+            return
+
+        if self.speed == 0:
+            return
+
+        if self.rect.bottom > self.max_y or check_wall_collision(self.rect):
+            self.speed = 0
+            return
+
+        self.velocity = self.direction * self.speed
+        self.direction += (GRAVITY * (self.dt / 1500))
+        self.rect = self.rect.move(self.velocity)
         if self.player.rect.colliderect(self.rect):
             self.collected = True
             self.give_value()
 
     def draw(self):
+        if self.despawn:
+            return
+        self.sprite.set_alpha(self.alpha)
         SCREEN.blit(self.sprite, self.rect)
 
 
@@ -481,9 +539,11 @@ class Enemy:
     state = "MOVE"
     steer_directions = [V_NORTH, V_NORTH_EAST, V_EAST, V_SOUTH_EAST, V_SOUTH, V_SOUTH_WEST, V_WEST, V_NORTH_WEST]
     dt = 0
+    dead = False
+    target_point: Vector2
 
     def __init__(self, w, h, sprite: Surface, speed: int, difficulty: int, health: int, attack_rate: int,
-                 outside_spawn: bool, telegraph_time: int):
+                 outside_spawn: bool, telegraph_time: int=400):
         if outside_spawn:
             side = random.randint(1, 4)
             x = 0
@@ -510,12 +570,21 @@ class Enemy:
         self.attack_rate = attack_rate
         self.telegraph_time = telegraph_time
         self.sprite.fill("Green")
+        self.target_point = self.get_target_point()
+
+    def get_target_point(self):
+        return Vector2(self.player.rect.center)
 
     def take_damage(self, damage):
         self.health -= damage
+        if self.health <= 0:
+            self.dead = True
+
+    def get_desired_direction(self):
+        return direction_to(self.rect.center, self.player.rect.center)
 
     def steer(self, enemies: list, index):
-        desired_direction = self.get_direction_to_player()
+        desired_direction = self.get_desired_direction()
         interest_weights = []
         danger_weights = [0, 0, 0, 0, 0, 0, 0, 0]
         for steer_dir in self.steer_directions:
@@ -604,6 +673,9 @@ class Enemy:
 
     def update(self, _dt):
         self.dt = _dt
+        if self.dead:
+            return
+
         match self.state:
             case "MOVE":
                 self.move()
@@ -620,7 +692,9 @@ class Enemy:
                 self.take_damage(ecto.damage)
 
     def draw(self):
-        GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
+        if self.dead:
+            return
+        GAME_BACKGROUND.blit(self.sprite, self.rect)
 
 
 class Dasher(Enemy):
@@ -642,13 +716,14 @@ class Dasher(Enemy):
 
     def move(self):
         self.speed = self.base_speed
-        super().move()
         self.last_attack += self.dt
-
+        self.target_point = Vector2(self.player.rect.center)
         if self.last_attack >= self.attack_rate and self.get_distance_to_player() <= self.dash_range:
             self.dash_direction = self.get_direction_to_player()
             self.state = "TELEGRAPH"
             self.last_attack = 0
+
+        super().move()
 
     def attack(self):
         self.speed = self.dash_speed
@@ -692,6 +767,10 @@ class EnemyProjectile(Projectile):
         if self.is_active:
             super().move()
 
+    def draw(self):
+        if self.is_active:
+            super().draw()
+
 
 class Shooter(Enemy):
     projectiles: list[EnemyProjectile] = []
@@ -703,8 +782,7 @@ class Shooter(Enemy):
     def __init__(self):
         w = 25
         h = 25
-        super().__init__(w, h, Surface((w, h)), 2, 3, 5, 4000, True,
-                         0)
+        super().__init__(w, h, Surface((w, h)), 2, 3, 5, 4000, True)
         self.sprite.fill("Red")
 
     def move(self):
@@ -746,8 +824,6 @@ class Shooter(Enemy):
             self.state = "MOVE"
 
     def update(self, _dt):
-        super().update(_dt)
-
         projectiles_to_keep = []
         for s in self.projectiles:
             s.update()
@@ -755,11 +831,61 @@ class Shooter(Enemy):
                 projectiles_to_keep.append(s)
 
         self.projectiles = projectiles_to_keep
+        super().update(_dt)
 
     def draw(self):
+        if self.dead:
+            return
+
+        for p in self.projectiles:
+            p.draw()
         super().draw()
-        for s in self.projectiles:
-            s.draw()
+
+
+class Beamer(Enemy):
+    beam: tuple
+    beam_length = 110
+    beam_angle = 0
+    beam_width = 16
+    beam_start = V_ZERO
+    beam_end = V_ZERO
+
+    def __init__(self):
+        super().__init__(20, 20, Surface((20, 20)), 2, 2, 5, 5000, True)
+        self.sprite.fill("purple")
+        self.beam_start = self.rect.center
+        self.beam_end = self.beam_start + (V_NORTH.rotate(self.beam_angle) * self.beam_length)
+
+    def move(self):
+        super().move()
+        self.last_attack += self.dt
+
+        if self.last_attack >= self.attack_rate:
+            self.last_attack = 0
+            self.beam_start = self.rect.center
+            self.beam_end = self.beam_start + (V_NORTH.rotate(self.beam_angle) * self.beam_length)
+            self.state = "ATTACK"
+
+    def attack(self):
+        super().move()
+
+        self.beam_start = Vector2(self.rect.center)
+        self.beam_end = self.beam_start + (V_NORTH.rotate(self.beam_angle) * self.beam_length)
+        self.beam_angle += 4
+
+        if self.beam_angle > 360:
+            self.state = "MOVE"
+            self.beam_angle = 0
+
+    def draw(self):
+        if self.dead:
+            return
+
+        if self.state == "ATTACK":
+            pg.draw.line(GAME_BACKGROUND, WHITE, self.beam_start, self.beam_end, self.beam_width)
+
+        super().draw()
+
 
 
 class EnemyFactory:
@@ -774,12 +900,14 @@ class EnemyFactory:
 
     @classmethod
     def create_enemy(cls) -> Enemy:
-        rand_int = random.randint(1, 2)
+        rand_int = random.randint(1, 3)
         match rand_int:
             case 1:
                 return Shooter()
             case 2:
                 return Dasher()
+            case 3:
+                return Beamer()
 
 
 class EnemyManager:
@@ -787,6 +915,7 @@ class EnemyManager:
     unspawned_enemies: list[Enemy] = []
     spawned_enemies: list[Enemy] = []
     dead_projectiles: list[EnemyProjectile] = []
+    essences: list[Essence] = []
     difficulty = 0
     spawn_rate = 0
     last_spawn = 0
@@ -802,11 +931,11 @@ class EnemyManager:
     def __get_difficulty(curr_wave: int):
         match curr_wave:
             case 1:
-                return 2
+                return 6
             case 2:
-                return 17
+                return 12
             case 3:
-                return 22
+                return 18
             case 4:
                 return 28
             case 5:
@@ -830,6 +959,7 @@ class EnemyManager:
         self.spawn_rate = self.__get_spawn_rate(curr_wave)
         self.difficulty = self.__get_difficulty(curr_wave)
         self.last_spawn = 0
+        self.dead_projectiles = []
         self.wave_complete = False
 
         while self.difficulty > 0:
@@ -838,44 +968,50 @@ class EnemyManager:
             self.difficulty -= enemy.difficulty
 
     def update(self, _dt: int):
-        enemies_to_keep: list[Enemy] = []
+        all_dead = True
         for i in range(len(self.spawned_enemies)):
             enemy = self.spawned_enemies[i]
+            if enemy.dead:
+                continue
+
             enemy.steer(self.spawned_enemies, i)
             enemy.update(_dt)
 
-            if enemy.health > 0:
-                enemies_to_keep.append(enemy)
-            elif enemy.__class__ == Shooter:
-                self.dead_projectiles = self.dead_projectiles + enemy.projectiles
+            if not enemy.dead:
+                all_dead = False
+            else:
+                for n in range(random.randint(1, 5)):
+                    self.essences.append(Essence(1, enemy.rect.center))
 
-        keep_projectiles = []
+                if enemy.__class__ == Shooter:
+                    self.dead_projectiles = self.dead_projectiles + enemy.projectiles
+
         for p in self.dead_projectiles:
             p.update()
-            if p.is_active:
-                keep_projectiles.append(p)
 
-        self.dead_projectiles = keep_projectiles
-        self.spawned_enemies = enemies_to_keep
         self.last_spawn += _dt
 
+        for ess in self.essences:
+            ess.update(_dt)
+
         len_unspawned = len(self.unspawned_enemies)
-        len_spawned = len(self.spawned_enemies)
 
         if self.last_spawn >= self.spawn_rate and len_unspawned > 0:
             self.spawned_enemies.append(self.unspawned_enemies.pop(0))
             self.last_spawn = 0
 
-        if len_unspawned <= 0 and len_spawned <= 0:
+        if len_unspawned <= 0 and all_dead:
             self.wave_complete = True
 
     def draw(self):
-        for enemy in self.spawned_enemies:
-            enemy.draw()
+        for ess in self.essences:
+            ess.draw()
 
         for p in self.dead_projectiles:
             p.draw()
 
+        for enemy in self.spawned_enemies:
+            enemy.draw()
 
 class Hazard:
     player: Player = Player.get_instance()
@@ -1001,18 +1137,19 @@ class Upgrade:
     upgrade_font = CB_24
     text_offset = tuple((20, 20))
     cost_text: Surface
+    essence_img = image.load("assets/sprites/player/essence.png").convert_alpha()
 
     def __init__(self, cost: int, info_text: str, upgrade_text: str):
         self.rect = Rect(0, 0, 200, 200)
         self.highlight_rect = Rect(0, 0, 200, 200)
         self.card = pg.image.load("assets/shop/empty_card_1.png")
         self.curr_card = self.card
-
+        self.essence_img = pg.transform.scale(self.essence_img, (32, 32))
         self.cost = cost
         self.upgrade_id = Upgrade.upgrade_id
         self.info_text = generate_lined_text(info_text, 160, self.info_font, WHITE)
         self.upgrade_text = generate_lined_text(upgrade_text, 160, self.upgrade_font, WHITE)
-        self.cost_text = CB_24.render(f"{self.cost} Essence", True, DARK_BLUE)
+        self.cost_text = CB_32.render(f"{self.cost}", True, DARK_BLUE)
 
         Upgrade.upgrade_id += 1
 
@@ -1086,8 +1223,8 @@ class Upgrade:
                     line = self.upgrade_text[i]
                     line_rect = line.get_rect()
                     GAME_BACKGROUND.blit(line, (self.rect.centerx - (line_rect.w // 2), self.rect.y + (i * 24) + self.text_offset[1]))
-
-                GAME_BACKGROUND.blit(self.cost_text, (self.rect.centerx - (self.cost_text.get_rect().w // 2), self.rect.bottom - self.text_offset[1] - 24))
+                GAME_BACKGROUND.blit(self.essence_img, (self.rect.centerx - 36, self.rect.bottom - self.text_offset[1] - 32))
+                GAME_BACKGROUND.blit(self.cost_text, (self.rect.centerx + 4, self.rect.bottom - self.text_offset[1] - 32))
 
 
 # UPGRADES BELOW THIS LINE
@@ -1112,6 +1249,7 @@ class NumEctoUpgrade(Upgrade):
 
     def apply_upgrade(self):
         self.player.ecto_shooter.max_num_ecto += 1
+        EctoShooter.max_num_ecto += 1
         self.update_info_text(f"Increase how many Ectoplasm you can shoot before you run out ~ ~ ~ECTOPLASM RANGE:~ ~{self.player.ecto_shooter.max_num_ecto} -> {self.player.ecto_shooter.max_num_ecto + 1}~")
 
 
@@ -1248,6 +1386,8 @@ class GameUI:
     # Load ectoplasm image
     ectoplasm_image = pygame.image.load('assets/sprites/player/ectoplasm.png').convert_alpha()
     ectoplasm_image = pygame.transform.scale(ectoplasm_image, (50, 50))
+    essence_img = image.load("assets/sprites/player/essence.png").convert_alpha()
+    essence_img = pg.transform.scale(essence_img, (50, 50))
     healthbar_boarder = image.load("assets/UI/healthbar.png").convert_alpha()
 
     def __init__(self):
@@ -1268,7 +1408,8 @@ class GameUI:
         SCREEN.blit(self.healthbar_boarder, (x - boarder_offset, y))
 
     def draw_coin_counter(self, surface, x, y):
-        text = CB_50.render(f"Coins: {self.player.num_coins}", True, WHITE)
+        text = CB_50.render(f"{self.player.num_coins}", True, WHITE)
+        surface.blit(self.essence_img, (x - 55, y))
         surface.blit(text, (x, y))
 
     def draw_ectoplasm(self, surface, x, y):
@@ -1307,7 +1448,7 @@ class GameUI:
         self.dt = _dt
 
     def draw(self):
-        SCREEN.fill("darkslategrey")
+        SCREEN.fill(SCREEN_COLOR)
         # Draw the UI elements in a horizontal line
         y_position = GAME_HEIGHT + 15  # Keep the same Y position for all elements
 
@@ -1409,6 +1550,8 @@ class Game:
             self.shop.close()
             self.curr_wave += 1
             self.enemy_manager.load_enemies(self.curr_wave)
+            self.enemy_manager.essences = []
+            self.enemy_manager.dead_projectiles = []
             self.hazard_manager.load_hazards()
             self.state = "WAVE"
 
@@ -1432,19 +1575,19 @@ class Game:
         pass
 
     def draw_wave(self):
-        SCREEN.blit(GAME_BACKGROUND, V_ZERO)
+        SCREEN.blit(GAME_BACKGROUND, (0, 0))
         GAME_BACKGROUND.fill(BG_COLOR)
         self.hazard_manager.draw()
         self.player.draw()
         self.enemy_manager.draw()
 
     def draw_shop(self):
-        SCREEN.blit(GAME_BACKGROUND, V_ZERO)
+        SCREEN.blit(GAME_BACKGROUND, (0, 0))
         GAME_BACKGROUND.fill(BG_COLOR)
         self.shop.draw()
 
     def draw_info(self):
-        SCREEN.blit(self.info_screen, V_ZERO)
+        SCREEN.blit(self.info_screen, (0, 0))
 
     def draw_game_over(self):
         if self.player.health > 0:
