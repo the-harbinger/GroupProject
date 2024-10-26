@@ -269,7 +269,7 @@ class Ectoplasm(Projectile):
 
 class EctoShooter:
     num_ecto = 0
-    max_num_ecto = 5
+    max_num_ecto = 3
     ectos: list[Ectoplasm] = []
     spawn_pos: tuple = GAME_RECT.center
     guide_width = 16
@@ -349,7 +349,7 @@ class ControlledRangeEctoShooter(EctoShooter):
         shoot_pressed = mouse.get_pressed()[0]
         self.shooting = shoot_pressed
         self.time_held += _dt
-        updated_range = self.min_range + (self.time_held // 1.5)
+        updated_range = self.min_range + (self.time_held // 2)
         self.curr_range = updated_range if updated_range <= Ectoplasm.max_range else Ectoplasm.max_range
         return super().shoot(_dt)
 
@@ -375,7 +375,7 @@ class Player:
     state = "MOVE"
     guide_width = 16
     out_of_ecto = False
-    ecto_shooter = EctoShooter()
+    ecto_shooter = ControlledRangeEctoShooter()
     dt = 0
 
     @classmethod
@@ -494,7 +494,7 @@ class Essence:
             self.blink_time += self.dt
 
             if self.blink_time >= self.blink_timer:
-                self.alpha = 255 if self.alpha == 100 else 100
+                self.alpha = 255 if self.alpha == 127 else 127
                 self.blink_time = 0
 
         if self.rect.colliderect(self.player.rect):
@@ -541,9 +541,11 @@ class Enemy:
     dt = 0
     dead = False
     target_point: Vector2
+    telegraph_text = CB_24.render("!", True, (255, 0, 0))
+    telegraph_text_rect = telegraph_text.get_rect()
 
     def __init__(self, w, h, sprite: Surface, speed: int, difficulty: int, health: int, attack_rate: int,
-                 outside_spawn: bool, telegraph_time: int=400):
+                 outside_spawn: bool, telegraph_time: int = 400):
         if outside_spawn:
             side = random.randint(1, 4)
             x = 0
@@ -631,11 +633,10 @@ class Enemy:
             steer_map[i] = interest
             if steer_map[best_direction_index] < interest:
                 best_direction_index = i
-        desired_velocity = (self.steer_directions[best_direction_index] + desired_direction)
+        desired_velocity = self.steer_directions[best_direction_index] + desired_direction
         if desired_velocity.length() != 0:
             desired_velocity = desired_velocity.normalize() * self.speed
-        steering_force = desired_velocity - self.velocity
-        self.velocity += steering_force
+        self.velocity += desired_velocity
 
     def get_direction_to_player(self):
         dy = self.player.rect.centery - self.rect.centery
@@ -648,8 +649,8 @@ class Enemy:
         return direction
 
     def get_distance_to_player(self):
-        return math.sqrt((abs(self.player.rect.centery - self.rect.centery)**2) +
-                         (abs(self.player.rect.centerx - self.rect.centerx)**2))
+        return math.sqrt((abs(self.player.rect.centery - self.rect.centery) ** 2) +
+                         (abs(self.player.rect.centerx - self.rect.centerx) ** 2))
 
     def move(self):
         if self.velocity.length() != 0:
@@ -662,10 +663,10 @@ class Enemy:
 
     def telegraph(self):
         self.telegraph_timer += self.dt
-        self.sprite.fill("Cyan")
+        self.telegraph_text_rect.bottom = self.rect.top - 2
+        self.telegraph_text_rect.centerx = self.rect.centerx
         if self.telegraph_timer >= self.telegraph_time:
             self.telegraph_timer = 0
-            self.sprite.fill("Green")
             self.state = "ATTACK"
 
     def idle(self):
@@ -694,7 +695,11 @@ class Enemy:
     def draw(self):
         if self.dead:
             return
+
         GAME_BACKGROUND.blit(self.sprite, self.rect)
+
+        if self.state == "TELEGRAPH":
+            GAME_BACKGROUND.blit(self.telegraph_text, self.telegraph_text_rect)
 
 
 class Dasher(Enemy):
@@ -709,19 +714,22 @@ class Dasher(Enemy):
     delt_damage = False
 
     def __init__(self):
-        w = 25
-        h = 25
+        w = 24
+        h = 24
         super().__init__(w, h, Surface((w, h)), 2, 2, 5, 2000, True,
                          400)
+        self.sprite = image.load("assets/sprites/enemy/dasher_0.png").convert_alpha()
 
     def move(self):
         self.speed = self.base_speed
         self.last_attack += self.dt
         self.target_point = Vector2(self.player.rect.center)
         if self.last_attack >= self.attack_rate and self.get_distance_to_player() <= self.dash_range:
-            self.dash_direction = self.get_direction_to_player()
-            self.state = "TELEGRAPH"
+            self.dash_direction = direction_to(self.rect.center, self.player.rect.center)
+            self.telegraph_text_rect.bottom = self.rect.top
+            self.telegraph_text_rect.centerx = self.rect.centerx
             self.last_attack = 0
+            self.state = "TELEGRAPH"
 
         super().move()
 
@@ -743,7 +751,7 @@ class Dasher(Enemy):
 
 
 class EnemyProjectile(Projectile):
-    player: Player = Player.get_instance()
+    player = Player.get_instance()
 
     def __init__(self, center, direction):
         rect = Rect(0, 0, 16, 16)
@@ -754,6 +762,7 @@ class EnemyProjectile(Projectile):
                          5,
                          2,
                          True)
+
 
     def update(self):
         if self.is_active:
@@ -780,14 +789,14 @@ class Shooter(Enemy):
     idle_chance = 10
 
     def __init__(self):
-        w = 25
-        h = 25
+        w = 24
+        h = 24
         super().__init__(w, h, Surface((w, h)), 2, 3, 5, 4000, True)
-        self.sprite.fill("Red")
+        self.sprite = image.load("assets/sprites/enemy/skull_0.png").convert_alpha()
 
     def move(self):
         if self.get_distance_to_player() <= 250:
-            self.velocity -= self.get_direction_to_player() * self.speed * 2
+            self.velocity -= self.get_direction_to_player() * (self.speed * 2)
 
         super().move()
         self.last_attack += self.dt
@@ -807,10 +816,9 @@ class Shooter(Enemy):
         if Shooter.curr_shooter_channel >= len(shooter_channels):
             Shooter.curr_shooter_channel = 0
 
-        idle_num = random.randint(1, 10)
+        idle_num = random.randint(1, 5)
         if idle_num == self.idle_chance:
-            self.idle_timer = random.randint(1000, 3000)
-            self.sprite.fill("coral")
+            self.idle_timer = 3000
             self.state = "IDLE"
 
             return
@@ -820,7 +828,6 @@ class Shooter(Enemy):
         self.idle_time += self.dt
         if self.idle_time >= self.idle_timer:
             self.idle_time = 0
-            self.sprite.fill("red")
             self.state = "MOVE"
 
     def update(self, _dt):
@@ -846,12 +853,15 @@ class Beamer(Enemy):
     beam: tuple
     beam_length = 110
     beam_angle = 0
-    beam_width = 16
+    beam_width = 8
     beam_start = V_ZERO
     beam_end = V_ZERO
+    rotate_speed = 2.5
+    base_speed = 3
+    attack_speed = 2
 
     def __init__(self):
-        super().__init__(20, 20, Surface((20, 20)), 2, 2, 5, 5000, True)
+        super().__init__(24, 24, Surface((20, 20)), self.base_speed, 1, 5, 5000, True)
         self.sprite.fill("purple")
         self.beam_start = self.rect.center
         self.beam_end = self.beam_start + (V_NORTH.rotate(self.beam_angle) * self.beam_length)
@@ -867,14 +877,16 @@ class Beamer(Enemy):
             self.state = "ATTACK"
 
     def attack(self):
-        super().move()
-
+        self.speed = self.attack_speed
         self.beam_start = Vector2(self.rect.center)
         self.beam_end = self.beam_start + (V_NORTH.rotate(self.beam_angle) * self.beam_length)
-        self.beam_angle += 4
+        self.beam_angle += self.rotate_speed
+
+        super().move()
 
         if self.beam_angle > 360:
             self.state = "MOVE"
+            self.speed = self.base_speed
             self.beam_angle = 0
 
     def draw(self):
@@ -885,7 +897,6 @@ class Beamer(Enemy):
             pg.draw.line(GAME_BACKGROUND, WHITE, self.beam_start, self.beam_end, self.beam_width)
 
         super().draw()
-
 
 
 class EnemyFactory:
@@ -1013,6 +1024,7 @@ class EnemyManager:
         for enemy in self.spawned_enemies:
             enemy.draw()
 
+
 class Hazard:
     player: Player = Player.get_instance()
     rect: Rect
@@ -1052,8 +1064,8 @@ class Spike(Hazard):
 
     def __init__(self, x, y):
         super().__init__(x, y, self.active_sprite)
-        self.active_timer = random.randint(5000, 10000)
-        self.inactive_timer = random.randint(2500, 6000)
+        self.active_timer = 5000
+        self.inactive_timer = 5000
 
     def active(self):
         if self.rect.colliderect(self.player.rect):
@@ -1217,14 +1229,19 @@ class Upgrade:
             if self.hovered:
                 for i in range(len(self.info_text)):
                     line = self.info_text[i]
-                    GAME_BACKGROUND.blit(line, (self.rect.x + self.text_offset[0], self.rect.y + (i * 16) + self.text_offset[1]))
+                    GAME_BACKGROUND.blit(line,
+                                         (self.rect.x + self.text_offset[0],
+                                          self.rect.y + (i * 16) + self.text_offset[1]))
             else:
                 for i in range(len(self.upgrade_text)):
                     line = self.upgrade_text[i]
                     line_rect = line.get_rect()
-                    GAME_BACKGROUND.blit(line, (self.rect.centerx - (line_rect.w // 2), self.rect.y + (i * 24) + self.text_offset[1]))
-                GAME_BACKGROUND.blit(self.essence_img, (self.rect.centerx - 36, self.rect.bottom - self.text_offset[1] - 32))
-                GAME_BACKGROUND.blit(self.cost_text, (self.rect.centerx + 4, self.rect.bottom - self.text_offset[1] - 32))
+                    GAME_BACKGROUND.blit(line, (
+                        self.rect.centerx - (line_rect.w // 2), self.rect.y + (i * 24) + self.text_offset[1]))
+                GAME_BACKGROUND.blit(self.essence_img,
+                                     (self.rect.centerx - 36, self.rect.bottom - self.text_offset[1] - 32))
+                GAME_BACKGROUND.blit(self.cost_text,
+                                     (self.rect.centerx + 4, self.rect.bottom - self.text_offset[1] - 32))
 
 
 # UPGRADES BELOW THIS LINE
@@ -1238,7 +1255,8 @@ class MaxHealthUpgrade(Upgrade):
     def apply_upgrade(self):
         self.player.max_health += 1
         self.player.health += 1
-        self.update_info_text(f"Increase your maximum health by  1 ~ ~ ~MAXIMUM HEALTH:~ ~{self.player.max_health} -> {self.player.max_health + 1}~")
+        self.update_info_text(
+            f"Increase your maximum health by  1 ~ ~ ~MAXIMUM HEALTH:~ ~{self.player.max_health} -> {self.player.max_health + 1}~")
 
 
 class NumEctoUpgrade(Upgrade):
@@ -1250,7 +1268,8 @@ class NumEctoUpgrade(Upgrade):
     def apply_upgrade(self):
         self.player.ecto_shooter.max_num_ecto += 1
         EctoShooter.max_num_ecto += 1
-        self.update_info_text(f"Increase how many Ectoplasm you can shoot before you run out ~ ~ ~ECTOPLASM RANGE:~ ~{self.player.ecto_shooter.max_num_ecto} -> {self.player.ecto_shooter.max_num_ecto + 1}~")
+        self.update_info_text(
+            f"Increase how many Ectoplasm you can shoot before you run out ~ ~ ~ECTOPLASM RANGE:~ ~{self.player.ecto_shooter.max_num_ecto} -> {self.player.ecto_shooter.max_num_ecto + 1}~")
 
 
 class EctoRangeUpgrade(Upgrade):
@@ -1261,7 +1280,8 @@ class EctoRangeUpgrade(Upgrade):
 
     def apply_upgrade(self):
         Ectoplasm.max_range *= 1.1
-        self.update_info_text(f"Increase how far you Ectoplasm travels by 10 percent ~ ~ ~ECTOPLASM RANGE:~ ~{Ectoplasm.max_range} -> {Ectoplasm.max_range * 1.1}~")
+        self.update_info_text(
+            f"Increase how far you Ectoplasm travels by 10 percent ~ ~ ~ECTOPLASM RANGE:~ ~{Ectoplasm.max_range} -> {Ectoplasm.max_range * 1.1}~")
 
 
 class RestoreHealthUpgrade(Upgrade):
@@ -1272,7 +1292,8 @@ class RestoreHealthUpgrade(Upgrade):
 
     def apply_upgrade(self):
         self.player.health = self.player.max_health
-        self.update_info_text(f"Restore your health to your maximum health ~ ~ ~HEALTH:~ ~{self.player.health} -> {self.player.max_health}~")
+        self.update_info_text(
+            f"Restore your health to your maximum health ~ ~ ~HEALTH:~ ~{self.player.health} -> {self.player.max_health}~")
 
 
 class PlayerSpeedUpgrade(Upgrade):
@@ -1283,7 +1304,8 @@ class PlayerSpeedUpgrade(Upgrade):
 
     def apply_upgrade(self):
         self.player.speed += 1
-        self.update_info_text(f"Increase your movement speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} -> {self.player.speed + 1}~")
+        self.update_info_text(
+            f"Increase your movement speed by 1 ~ ~ ~SPEED:~ ~{self.player.speed} -> {self.player.speed + 1}~")
 
 
 class EctoDamageUpgrade(Upgrade):
@@ -1294,7 +1316,8 @@ class EctoDamageUpgrade(Upgrade):
 
     def apply_upgrade(self):
         Ectoplasm.damage += 1
-        self.update_info_text(f"Increase the damage delt by Ectoplasm by 1 ~ ~ ~ECTOPLASM DAMAGE:~ ~{Ectoplasm.damage} -> {Ectoplasm.damage + 1}~")
+        self.update_info_text(
+            f"Increase the damage delt by Ectoplasm by 1 ~ ~ ~ECTOPLASM DAMAGE:~ ~{Ectoplasm.damage} -> {Ectoplasm.damage + 1}~")
 
 
 class ControlRangeUpgrade(Upgrade):
@@ -1305,7 +1328,8 @@ class ControlRangeUpgrade(Upgrade):
 
     def apply_upgrade(self):
         self.player.ecto_shooter = ControlledRangeEctoShooter()
-        self.update_info_text("Control the distance of how far your Ectoplasm travels by holding down the mouse button before you shoot")
+        self.update_info_text(
+            "Control the distance of how far your Ectoplasm travels by holding down the mouse button before you shoot")
 
 
 class Shop:
@@ -1414,7 +1438,8 @@ class GameUI:
 
     def draw_ectoplasm(self, surface, x, y):
         text = CB_50.render(
-            f"{self.player.ecto_shooter.max_num_ecto - self.player.ecto_shooter.num_ecto}/{self.player.ecto_shooter.max_num_ecto}", True, WHITE
+            f"{self.player.ecto_shooter.max_num_ecto - self.player.ecto_shooter.num_ecto}/{self.player.ecto_shooter.max_num_ecto}",
+            True, WHITE
         )
         text_rect = text.get_rect()
         text_rect.x = x + self.ectoplasm_image.get_width() + 20
@@ -1455,7 +1480,7 @@ class GameUI:
         # Starting X positions for the elements
         x_health_bar = 50
         x_coin_counter = x_health_bar + 300  # Adjust spacing after health bar
-        x_ectoplasm = x_coin_counter + 300  # Adjust spacing after coin counter
+        x_ectoplasm = x_coin_counter + 100  # Adjust spacing after coin counter
 
         # Draw the health bar
         self.draw_health_bar(SCREEN, x_health_bar, y_position)
