@@ -137,8 +137,8 @@ def check_wall_collision(rect: Rect) -> bool:
     return collides
 
 
-def get_rand_point_for_rect(rect: Rect) -> Vector2:
-    return Vector2(random.randint(0, GAME_WIDTH - rect.width), random.randint(0, GAME_HEIGHT - rect.height))
+def get_rand_point_for_rect(rect: Rect) -> tuple:
+    return random.randint(rect.width, GAME_WIDTH - rect.width), random.randint(rect.height, GAME_HEIGHT - rect.height)
 
 
 def generate_empty_grid(num_rows: int, num_cols: int) -> list[list]:
@@ -201,6 +201,11 @@ def direction_to(pos: tuple, other_pos: tuple):
     return direction
 
 
+def abs_distance_to(pos: tuple, other_pos: tuple):
+    return math.sqrt((abs(pos[0] - other_pos[0]) ** 2) +
+                     (abs(pos[1] - other_pos[1]) ** 2))
+
+
 class Projectile:
     rect: Rect
     sprite: Surface
@@ -248,7 +253,7 @@ class Ectoplasm(Projectile):
         super().__init__(rect,
                          image.load("assets/sprites/player/ectoplasm.png").convert_alpha(),
                          direction,
-                         10,
+                         20,
                          5,
                          True)
         self.damage = 5
@@ -376,6 +381,12 @@ class Player:
     guide_width = 16
     out_of_ecto = False
     ecto_shooter = ControlledRangeEctoShooter()
+    invincible = False
+    invincible_timer = 750
+    invincible_time = 0
+    blink_timer = 75
+    blink_time = 0
+    alpha = 255
     dt = 0
 
     @classmethod
@@ -397,9 +408,10 @@ class Player:
         return direction
 
     def take_damage(self, damage: int):
-        if DEBUG_INVINCIBLE:
+        if self.invincible:
             return
         self.health -= damage
+        self.invincible = True
 
     def move(self):
         keys = pg.key.get_pressed()
@@ -430,6 +442,20 @@ class Player:
             case "SHOOT":
                 self.shoot()
 
+        if self.invincible:
+            self.invincible_time += self.dt
+
+            self.blink_time += self.dt
+
+            if self.blink_time >= self.blink_timer:
+                self.alpha = 255 if self.alpha == 127 else 127
+                self.blink_time = 0
+
+        if self.invincible_time >= self.invincible_timer:
+            self.invincible_time = 0
+            self.alpha = 255
+            self.invincible = False
+
         uncollected_ectos = []
         for ecto in self.ectos:
             if ecto.rect.colliderect(self.rect) and not ecto.is_active:
@@ -448,6 +474,7 @@ class Player:
         for ecto in self.ectos:
             ecto.draw()
         self.ecto_shooter.draw()
+        self.sprite.set_alpha(self.alpha)
         GAME_BACKGROUND.blit(self.sprite, (self.rect.x, self.rect.y))
 
 
@@ -521,6 +548,36 @@ class Essence:
             return
         self.sprite.set_alpha(self.alpha)
         SCREEN.blit(self.sprite, self.rect)
+
+
+class EnemyProjectile(Projectile):
+    player = Player.get_instance()
+
+    def __init__(self, center, direction):
+        rect = Rect(0, 0, 16, 16)
+        rect.center = center
+        super().__init__(rect,
+                         image.load("assets/sprites/enemy/enemy_projectile.png").convert_alpha(),
+                         direction,
+                         5,
+                         2,
+                         True)
+
+    def update(self):
+        if self.is_active:
+            if check_wall_collision(self.rect):
+                self.is_active = False
+
+            if self.rect.colliderect(self.player.rect):
+                self.is_active = False
+                self.player.take_damage(self.damage)
+
+        if self.is_active:
+            super().move()
+
+    def draw(self):
+        if self.is_active:
+            super().draw()
 
 
 class Enemy:
@@ -636,7 +693,7 @@ class Enemy:
         desired_velocity = self.steer_directions[best_direction_index] + desired_direction
         if desired_velocity.length() != 0:
             desired_velocity = desired_velocity.normalize() * self.speed
-        self.velocity += desired_velocity
+        self.velocity += desired_velocity * 0.5
 
     def get_direction_to_player(self):
         dy = self.player.rect.centery - self.rect.centery
@@ -702,6 +759,7 @@ class Enemy:
             GAME_BACKGROUND.blit(self.telegraph_text, self.telegraph_text_rect)
 
 
+# ALL ENEMIES BELOW THIS LINE
 class Dasher(Enemy):
     dash_speed = 15
     base_speed = 2
@@ -748,37 +806,6 @@ class Dasher(Enemy):
             self.delt_damage = False
             self.dash_distance = 0
             self.state = "MOVE"
-
-
-class EnemyProjectile(Projectile):
-    player = Player.get_instance()
-
-    def __init__(self, center, direction):
-        rect = Rect(0, 0, 16, 16)
-        rect.center = center
-        super().__init__(rect,
-                         image.load("assets/sprites/enemy/enemy_projectile.png").convert_alpha(),
-                         direction,
-                         5,
-                         2,
-                         True)
-
-
-    def update(self):
-        if self.is_active:
-            if check_wall_collision(self.rect):
-                self.is_active = False
-
-            if self.rect.colliderect(self.player.rect):
-                self.is_active = False
-                self.player.take_damage(self.damage)
-
-        if self.is_active:
-            super().move()
-
-    def draw(self):
-        if self.is_active:
-            super().draw()
 
 
 class Shooter(Enemy):
@@ -857,19 +884,31 @@ class Beamer(Enemy):
     beam_start = V_ZERO
     beam_end = V_ZERO
     rotate_speed = 2.5
-    base_speed = 3
-    attack_speed = 2
+    base_speed = 4
+    attack_speed = 0
+    eye_sprite: Surface
+    eye_rect: Rect
+    target_point: tuple
 
     def __init__(self):
         super().__init__(24, 24, Surface((20, 20)), self.base_speed, 1, 5, 5000, True)
-        self.sprite.fill("purple")
         self.beam_start = self.rect.center
         self.beam_end = self.beam_start + (V_NORTH.rotate(self.beam_angle) * self.beam_length)
+        self.sprite = image.load("assets/sprites/enemy/beamer_base_0.png").convert_alpha()
+        self.eye_sprite = image.load("assets/sprites/enemy/beamer_eye_0.png").convert_alpha()
+        self.eye_rect = Rect(0, 0, 12, 12)
+        self.eye_rect.center = self.rect.center
+        self.target_point = get_rand_point_for_rect(self.rect)
+
+    def get_desired_direction(self):
+        if abs_distance_to(self.rect.center, self.target_point) <= 5:
+            self.target_point = get_rand_point_for_rect(self.rect)
+
+        return direction_to(self.rect.center, self.target_point)
 
     def move(self):
         super().move()
         self.last_attack += self.dt
-
         if self.last_attack >= self.attack_rate:
             self.last_attack = 0
             self.beam_start = self.rect.center
@@ -878,8 +917,13 @@ class Beamer(Enemy):
 
     def attack(self):
         self.speed = self.attack_speed
+
         self.beam_start = Vector2(self.rect.center)
         self.beam_end = self.beam_start + (V_NORTH.rotate(self.beam_angle) * self.beam_length)
+
+        if self.player.rect.clipline(self.beam_start, self.beam_end):
+            self.player.take_damage(5)
+
         self.beam_angle += self.rotate_speed
 
         super().move()
@@ -893,10 +937,123 @@ class Beamer(Enemy):
         if self.dead:
             return
 
-        if self.state == "ATTACK":
-            pg.draw.line(GAME_BACKGROUND, WHITE, self.beam_start, self.beam_end, self.beam_width)
-
         super().draw()
+
+        if self.state == "ATTACK":
+            pg.draw.line(GAME_BACKGROUND, (208, 16, 0), self.beam_start, self.beam_end, self.beam_width)
+
+        GAME_BACKGROUND.blit(self.eye_sprite, self.rect)
+
+
+class ExplosionPlacer(Enemy):
+    pass
+
+
+class Trailer(Enemy):
+    pass
+
+
+# Body parts separate and connect damaging lines between them
+class Expander(Enemy):
+    expand_speed = 1
+    expand_dist = 150
+    beam_width = 3
+    point_rects: list[Rect]
+    point_sprites = [
+        image.load("assets/sprites/enemy/expander_up.png").convert_alpha(),
+        image.load("assets/sprites/enemy/expander_right.png").convert_alpha(),
+        image.load("assets/sprites/enemy/expander_down.png").convert_alpha(),
+        image.load("assets/sprites/enemy/expander_left.png").convert_alpha()
+    ]
+    up_pos: tuple
+    right_pos: tuple
+    down_pos: tuple
+    left_pos: tuple
+    point_dirs = [V_NORTH, V_EAST, V_SOUTH, V_WEST]
+    mid_pos: list[tuple]
+    reversed_dir = False
+    beams: list[tuple]
+
+    def __init__(self):
+        super().__init__(24, 24, Surface((20, 20)), 2, 1, 5, 5000, True)
+        self.sprite = image.load("assets/sprites/enemy/expander_core.png").convert_alpha()
+
+        self.point_rects = [
+            self.rect.copy(),
+            self.rect.copy(),
+            self.rect.copy(),
+            self.rect.copy()
+        ]
+
+    def set_point_pos(self):
+        self.up_pos = self.point_rects[0].midtop
+        self.right_pos = self.point_rects[1].midright
+        self.down_pos = self.point_rects[2].midbottom
+        self.left_pos = self.point_rects[3].midleft
+
+    def set_beams(self):
+        self.beams = [
+            (self.up_pos, self.right_pos),
+            (self.right_pos, self.down_pos),
+            (self.down_pos, self.left_pos),
+            (self.left_pos, self.up_pos)
+        ]
+
+    def move(self):
+        super().move()
+        for i in range(len(self.point_rects)):
+            pr = self.point_rects[i]
+            pr.center = self.rect.center
+
+        self.last_attack += self.dt
+        if self.last_attack >= self.attack_rate:
+            self.set_point_pos()
+            self.set_beams()
+            self.last_attack = 0
+            self.state = "ATTACK"
+
+    def attack(self):
+        attack_finished = False
+        for i in range(len(self.point_rects)):
+            pr = self.point_rects[i]
+            direction = self.point_dirs[i]
+
+            if not self.reversed_dir and abs_distance_to(pr.center, self.rect.center) < self.expand_dist:
+                self.point_rects[i] = pr.move(direction * self.expand_speed)
+                check_wall_collision(self.point_rects[i])
+            else:
+                self.reversed_dir = True
+                if abs_distance_to(pr.center, self.rect.center) <= 0:
+                    attack_finished = True
+                else:
+                    self.point_rects[i] = pr.move((-1 * direction) * self.expand_speed)
+                    attack_finished = False
+
+        self.set_point_pos()
+        self.set_beams()
+
+        for b in self.beams:
+            if self.player.rect.clipline(b):
+                self.player.take_damage(5)
+
+        if attack_finished:
+            self.reversed_dir = False
+            self.state = "MOVE"
+            for pr in self.point_rects:
+                pr.center = self.rect.center
+
+    def draw(self):
+        super().draw()
+
+        if self.dead:
+            return
+
+        for i in range(len(self.point_sprites)):
+            GAME_BACKGROUND.blit(self.point_sprites[i], self.point_rects[i])
+
+        if self.state == "ATTACK":
+            for b in self.beams:
+                pg.draw.line(GAME_BACKGROUND, (208, 16, 0), b[0], b[1], self.beam_width)
 
 
 class EnemyFactory:
@@ -911,14 +1068,16 @@ class EnemyFactory:
 
     @classmethod
     def create_enemy(cls) -> Enemy:
-        rand_int = random.randint(1, 3)
-        match rand_int:
-            case 1:
-                return Shooter()
-            case 2:
-                return Dasher()
-            case 3:
-                return Beamer()
+        return Expander()
+
+        # rand_int = random.randint(1, 3)
+        # match rand_int:
+        #     case 1:
+        #         return Shooter()
+        #     case 2:
+        #         return Dasher()
+        #     case 3:
+        #         return Beamer()
 
 
 class EnemyManager:
