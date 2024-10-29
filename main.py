@@ -953,7 +953,6 @@ class Trailer(Enemy):
     pass
 
 
-# Body parts separate and connect damaging lines between them
 class Expander(Enemy):
     expand_speed = 1
     expand_dist = 150
@@ -965,12 +964,7 @@ class Expander(Enemy):
         image.load("assets/sprites/enemy/expander_down.png").convert_alpha(),
         image.load("assets/sprites/enemy/expander_left.png").convert_alpha()
     ]
-    up_pos: tuple
-    right_pos: tuple
-    down_pos: tuple
-    left_pos: tuple
     point_dirs = [V_NORTH, V_EAST, V_SOUTH, V_WEST]
-    mid_pos: list[tuple]
     reversed_dir = False
     beams: list[tuple]
 
@@ -985,18 +979,17 @@ class Expander(Enemy):
             self.rect.copy()
         ]
 
-    def set_point_pos(self):
-        self.up_pos = self.point_rects[0].midtop
-        self.right_pos = self.point_rects[1].midright
-        self.down_pos = self.point_rects[2].midbottom
-        self.left_pos = self.point_rects[3].midleft
-
     def set_beams(self):
+        right_pos = self.point_rects[1].midright
+        up_pos = self.point_rects[0].midtop
+        down_pos = self.point_rects[2].midbottom
+        left_pos = self.point_rects[3].midleft
+
         self.beams = [
-            (self.up_pos, self.right_pos),
-            (self.right_pos, self.down_pos),
-            (self.down_pos, self.left_pos),
-            (self.left_pos, self.up_pos)
+            (up_pos, right_pos),
+            (right_pos, down_pos),
+            (down_pos, left_pos),
+            (left_pos, up_pos)
         ]
 
     def move(self):
@@ -1007,7 +1000,6 @@ class Expander(Enemy):
 
         self.last_attack += self.dt
         if self.last_attack >= self.attack_rate:
-            self.set_point_pos()
             self.set_beams()
             self.last_attack = 0
             self.state = "ATTACK"
@@ -1029,9 +1021,7 @@ class Expander(Enemy):
                     self.point_rects[i] = pr.move((-1 * direction) * self.expand_speed)
                     attack_finished = False
 
-        self.set_point_pos()
         self.set_beams()
-
         for b in self.beams:
             if self.player.rect.clipline(b):
                 self.player.take_damage(5)
@@ -1068,16 +1058,15 @@ class EnemyFactory:
 
     @classmethod
     def create_enemy(cls) -> Enemy:
-        return Expander()
-
-        # rand_int = random.randint(1, 3)
-        # match rand_int:
-        #     case 1:
-        #         return Shooter()
-        #     case 2:
-        #         return Dasher()
-        #     case 3:
-        #         return Beamer()
+        match random.randint(1, 4):
+            case 1:
+                return Shooter()
+            case 2:
+                return Dasher()
+            case 3:
+                return Beamer()
+            case 4:
+                return Expander()
 
 
 class EnemyManager:
